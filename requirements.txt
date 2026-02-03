@@ -10,3 +10,5 @@ pyinstaller
 pywin32; sys_platform == "win32"
 windows-capture ; sys_platform == "win32"
 pyobjc-framework-Quartz ; sys_platform == "darwin" # TODO: dev macOS in another branch
+# Optional: For better anti-detection (requires Interception driver installation)
+# interception-python ; sys_platform == "win32"

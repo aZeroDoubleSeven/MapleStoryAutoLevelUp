@@ -6,12 +6,14 @@ When player's HP/MP drop to specific threshold, it'd press key to drink potion
 # Standard Import
 import threading
 import time
+import random
 import cv2
 
 # Local Import
 from src.utils.logger import logger
 from src.utils.common import get_bar_percent
 from src.input.KeyBoardController import press_key
+from src.utils.anti_detect import get_human_behavior, TimingRandomizer
 
 class HealthMonitor:
     '''
@@ -176,8 +178,13 @@ class HealthMonitor:
                     else:
                         self.kb.is_need_force_heal = False
                 else:
+                    # Add randomized cooldown to avoid detection
+                    human = get_human_behavior()
+                    randomized_hp_cd = human.randomize_cooldown(hp_cd, 'potion')
                     if (self.hp_percent <= hp_thres and
-                        t_cur - self.t_last_heal > hp_cd):
+                        t_cur - self.t_last_heal > randomized_hp_cd):
+                        # Add small random delay before healing (human reaction time)
+                        time.sleep(random.uniform(0.05, 0.2))
                         self._heal()
                         logger.info(f"[Health Monitor] Auto heal triggered, HP: {self.hp_percent:.1f}%")
                         self.t_last_heal = t_cur
@@ -196,8 +203,12 @@ class HealthMonitor:
                             self.is_terminated = True # Terminate Health monitor
                             self.kb.is_terminated = True # Terminate AutoBot
 
-                # Check if need MP (with cooldown)
-                if (self.mp_percent <= mp_thres and t_cur - self.t_last_mp > mp_cd):
+                # Check if need MP (with cooldown and randomization)
+                human = get_human_behavior()
+                randomized_mp_cd = human.randomize_cooldown(mp_cd, 'potion')
+                if (self.mp_percent <= mp_thres and t_cur - self.t_last_mp > randomized_mp_cd):
+                    # Add small random delay before using MP potion
+                    time.sleep(random.uniform(0.03, 0.15))
                     self._add_mp()
                     self.t_last_mp = t_cur
                     logger.info(f"[Health Monitor] Auto MP triggered, MP: {self.mp_percent:.1f}%")
@@ -211,19 +222,25 @@ class HealthMonitor:
 
     def _heal(self):
         '''
-        Execute heal action
+        Execute heal action with randomized timing
         '''
         try:
-            press_key(self.cfg["key"]["add_hp"], 0.05)
+            # Randomized key press duration
+            human = get_human_behavior()
+            duration = human.get_key_duration(0.05)
+            press_key(self.cfg["key"]["add_hp"], duration)
         except Exception as e:
             logger.error(f"[Health Monitor] Heal action failed: {e}")
 
     def _add_mp(self):
         '''
-        Execute MP recovery action
+        Execute MP recovery action with randomized timing
         '''
         try:
-            press_key(self.cfg["key"]["add_mp"], 0.05)
+            # Randomized key press duration
+            human = get_human_behavior()
+            duration = human.get_key_duration(0.05)
+            press_key(self.cfg["key"]["add_mp"], duration)
         except Exception as e:
             logger.error(f"[Health Monitor] MP action failed: {e}")
 

@@ -27,6 +27,7 @@ from src.utils.common import (find_pattern_sqdiff, draw_rectangle, screenshot, n
     click_in_game_window, mask_route_colors, to_opencv_hsv, debug_minimap_colors,
     activate_game_window, is_img_16_to_9, normalize_pixel_coordinate, resize_window
 )
+from src.utils.anti_detect import get_human_behavior, init_anti_detect, TimingRandomizer
 from src.input.KeyBoardController import KeyBoardController, press_key
 from src.input.KeyBoardListener import KeyBoardListener
 if is_mac():
@@ -149,6 +150,9 @@ class MapleStoryAutoBot:
         '''
         load_config
         '''
+        # Initialize anti-detection system with config
+        init_anti_detect(cfg)
+        
         # Parse color code in config
         self.color_code = {
             tuple(map(int, k.split(','))): v
@@ -1223,20 +1227,22 @@ class MapleStoryAutoBot:
 
     def channel_change(self):
         '''
-        channel_change
+        channel_change with human-like timing
         '''
         logger.info("[channel_change] Start")
 
         window_title = self.capture.window_title
         ui_coords = self.cfg["ui_coords"]
+        
+        # Use randomized delays between UI interactions
         click_in_game_window(window_title, ui_coords["menu"])
-        time.sleep(1)
+        time.sleep(random.uniform(0.8, 1.2))
         click_in_game_window(window_title, ui_coords["channel"])
-        time.sleep(1)
+        time.sleep(random.uniform(0.8, 1.3))
         click_in_game_window(window_title, ui_coords["random_channel"])
-        time.sleep(1)
+        time.sleep(random.uniform(0.7, 1.1))
         click_in_game_window(window_title, ui_coords["random_channel_confirm"])
-        time.sleep(1)
+        time.sleep(random.uniform(0.9, 1.2))
 
         loc_login_button = None
         while loc_login_button is None and not self.is_terminated:
@@ -1482,13 +1488,18 @@ class MapleStoryAutoBot:
         if self.cfg["bot"]["attack"] == "aoe_skill":
             dx = self.cfg["aoe_skill"]["range_x"] // 2 + margin
             dy = self.cfg["aoe_skill"]["range_y"] // 2 + margin
-            cooldown = self.cfg["aoe_skill"]["cooldown"]
+            base_cooldown = self.cfg["aoe_skill"]["cooldown"]
         elif self.cfg["bot"]["attack"] == "directional":
             dx = self.cfg["directional_attack"]["range_x"] + margin
             dy = self.cfg["directional_attack"]["range_y"] + margin
-            cooldown = self.cfg["directional_attack"]["cooldown"]
+            base_cooldown = self.cfg["directional_attack"]["cooldown"]
         else:
             raise RuntimeError(f"Unsupported attack mode: {self.cfg['bot']['attack']}")
+        
+        # Apply randomization to cooldown to avoid detection
+        human = get_human_behavior()
+        cooldown = human.randomize_cooldown(base_cooldown, 'attack')
+        
         x0 = max(0                      , self.loc_player[0] - dx)
         x1 = min(self.img_frame.shape[1], self.loc_player[0] + dx)
         y0 = max(0                      , self.loc_player[1] - dy)
@@ -1505,7 +1516,8 @@ class MapleStoryAutoBot:
         if self.cfg["bot"]["attack"] == "aoe_skill":
             if time.time() - self.t_last_attack > cooldown:
                 self.cmd_action = "attack"
-                self.t_last_attack = time.time()
+                # Add slight randomization to attack timing record
+                self.t_last_attack = time.time() + random.uniform(-0.05, 0.05)
 
         elif self.cfg["bot"]["attack"] == "directional":
             # Get nearest monster to player
@@ -1516,17 +1528,31 @@ class MapleStoryAutoBot:
             # Attack Command
             if time.time() - self.t_last_attack > cooldown and attack_direction is not None:
                 self.cmd_action = "attack"
-                self.t_last_attack = time.time()
+                # Add slight randomization to attack timing record
+                self.t_last_attack = time.time() + random.uniform(-0.05, 0.05)
                 # Set up attack direction
                 self.cmd_move_x = attack_direction
 
     def update_cmd_by_random(self):
         '''
         update_cmd_by_random - pick a random action except 'up' and teleport command
+        Uses weighted random choices to appear more natural
         '''
-        self.cmd_move_x = random.choice(["left", "right", "none"])
-        self.cmd_move_y = random.choice(["down", "none"])
-        self.cmd_action = random.choice(["jump", "none"])
+        human = get_human_behavior()
+        
+        # Use weighted choices - humans tend to continue in the same direction
+        left_right_weights = [0.35, 0.35, 0.3]  # left, right, none
+        self.cmd_move_x = random.choices(["left", "right", "none"], weights=left_right_weights)[0]
+        
+        up_down_weights = [0.3, 0.7]  # down, none (avoid up to prevent accidental ladder climbing)
+        self.cmd_move_y = random.choices(["down", "none"], weights=up_down_weights)[0]
+        
+        action_weights = [0.4, 0.6]  # jump, none
+        self.cmd_action = random.choices(["jump", "none"], weights=action_weights)[0]
+        
+        # Add slight delay before random action to simulate human thinking
+        time.sleep(random.uniform(0.1, 0.3))
+        
         logger.warning("[update_cmd_by_random]"\
                     f"{self.cmd_move_x} {self.cmd_move_y} {self.cmd_action}")
 
@@ -1787,9 +1813,11 @@ class MapleStoryAutoBot:
 
             self.is_frame_done = True
 
-            # Cap FPS to save system resource
+            # Cap FPS to save system resource with slight randomization
             frame_duration = time.time() - t_start
-            target_duration = 1.0 / self.cfg["system"]["fps_limit_main"]
+            base_target = 1.0 / self.cfg["system"]["fps_limit_main"]
+            # Add slight random variance to frame timing (±10%)
+            target_duration = base_target * random.uniform(0.9, 1.1)
             if frame_duration < target_duration:
                 time.sleep(target_duration - frame_duration)
 

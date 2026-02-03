@@ -333,3 +333,48 @@ profiler:
   # When the FPS is lower than 5, please use profiler to find which code block is costing more time 
   enable: False       # ✅ To print the profiler result or not
   print_frequency: 30 # Print profiler result for every 30 frames
+
+anti_detect:
+  # 🛡️ 反检测设置 (Anti-Detection Settings)
+  # 这些设置帮助机器人行为更像真人操作，降低被检测的风险
+  
+  # 输入后端选择
+  # 可选值：
+  #   - "auto": 自动选择最佳后端（推荐）
+  #   - "ctypes_raw": 使用 Windows API 直接调用，添加硬件扫描码（无需重启，推荐）
+  #   - "interception": 使用 Interception 驱动（效果最好，但需要安装驱动并重启）
+  #   - "pyautogui": 使用 pyautogui（容易被检测，不推荐）
+  input_backend: "ctypes_raw"  # 默认使用 ctypes_raw，无需重启电脑
+  
+  # 按键时长随机化
+  key_duration_base: 0.05           # ⏱️ 基础按键时长（秒）
+  key_duration_variance: 0.03       # ⏱️ 时长变化范围（±30毫秒）
+  
+  # Action delay randomization
+  action_delay_min: 0.02            # ⏱️ Minimum delay between actions (seconds)
+  action_delay_max: 0.08            # ⏱️ Maximum delay between actions (seconds)
+  
+  # Attack cooldown variance
+  attack_cooldown_variance: 0.15    # 📊 Attack cooldown variance (±15%)
+  
+  # Movement micro-pause settings
+  micro_pause_probability: 0.05     # 📊 Chance of a brief pause (5%)
+  micro_pause_duration_min: 0.1     # ⏱️ Minimum pause duration
+  micro_pause_duration_max: 0.3     # ⏱️ Maximum pause duration
+  
+  # Occasional idle behavior
+  idle_probability: 0.01            # 📊 Chance of idle break per frame (1%)
+  idle_duration_min: 0.5            # ⏱️ Minimum idle duration
+  idle_duration_max: 2.0            # ⏱️ Maximum idle duration
+  
+  # Buff skill timing variance
+  buff_timing_variance: 0.2         # 📊 Buff cooldown variance (±20%)
+  
+  # Potion timing variance
+  potion_timing_variance: 0.25      # 📊 Potion cooldown variance (±25%)
+  
+  # Feature toggles
+  enable_random_delays: True        # ✅ Enable random delays between actions
+  enable_micro_pauses: True         # ✅ Enable occasional micro-pauses
+  enable_idle_behavior: True        # ✅ Enable occasional idle breaks
+  enable_typing_variance: True      # ✅ Enable key press duration variance
