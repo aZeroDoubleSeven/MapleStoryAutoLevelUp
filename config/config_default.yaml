@@ -341,10 +341,22 @@ anti_detect:
   # 输入后端选择
   # 可选值：
   #   - "auto": 自动选择最佳后端（推荐）
+  #   - "arduino_hid": 使用 Arduino 硬件 HID（最安全，完全不可检测，需要硬件）
   #   - "ctypes_raw": 使用 Windows API 直接调用，添加硬件扫描码（无需重启，推荐）
   #   - "interception": 使用 Interception 驱动（效果最好，但需要安装驱动并重启）
   #   - "pyautogui": 使用 pyautogui（容易被检测，不推荐）
   input_backend: "ctypes_raw"  # 默认使用 ctypes_raw，无需重启电脑
+  
+  # Arduino HID 设置
+  # 只有当 input_backend 设置为 "arduino_hid" 时才会使用
+  arduino:
+    port: ""                   # 🔌 串口端口 (留空自动检测，如 "COM3" 或 "/dev/ttyACM0")
+    baud_rate: 115200          # 📡 波特率
+    auto_detect: True          # 🔍 自动检测 Arduino 设备
+    timeout: 0.1               # ⏱️ 串口超时（秒）
+    heartbeat_interval: 1.0    # 💓 心跳检测间隔（秒）
+    reconnect_delay: 2.0       # 🔄 重连延迟（秒）
+    enable_batch: True         # 📦 启用批量命令（降低延迟）
   
   # 按键时长随机化
   key_duration_base: 0.05           # ⏱️ 基础按键时长（秒）

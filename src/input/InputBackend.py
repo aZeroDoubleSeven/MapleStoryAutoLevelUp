@@ -475,6 +475,11 @@ class InterceptionBackend(InputBackend):
 # ============================================================
 
 _current_backend = None
+_arduino_backend = None  # Arduino后端单独管理，支持UI显示状态
+
+def get_arduino_backend():
+    '''获取Arduino HID后端实例（用于UI状态显示）'''
+    return _arduino_backend
 
 def get_input_backend(backend_type: str = 'auto') -> InputBackend:
     '''
@@ -483,6 +488,7 @@ def get_input_backend(backend_type: str = 'auto') -> InputBackend:
     参数：
         backend_type: 后端类型
             - 'auto': 自动选择最佳可用后端（推荐）
+            - 'arduino_hid': 使用 Arduino 硬件 HID（最安全，需要硬件）
             - 'ctypes_raw': 使用 ctypes 直接调用 Windows API（无需重启）
             - 'interception': 使用 Interception 驱动（需要重启）
             - 'pyautogui': 使用 pyautogui（容易被检测）
@@ -490,30 +496,34 @@ def get_input_backend(backend_type: str = 'auto') -> InputBackend:
     返回：
         InputBackend 实例
         
-    自动选择顺序：
-        1. ctypes_raw - 无需安装，无需重启
-        2. interception - 如果已安装驱动
-        3. pyautogui - 兜底方案
+    自动选择顺序（考虑安全性）：
+        1. arduino_hid - 如果已连接，最安全
+        2. ctypes_raw - 无需安装，无需重启
+        3. interception - 如果已安装驱动
+        4. pyautogui - 兜底方案
     '''
-    global _current_backend
+    global _current_backend, _arduino_backend
     
     if _current_backend is not None:
         return _current_backend
     
     if backend_type == 'auto':
-        # 优先使用 ctypes_raw（无需重启）
+        # 优先使用 Arduino HID（最安全）
         backends_to_try = [
-            ('ctypes_raw', CtypesRawBackend),
-            ('interception', InterceptionBackend),
-            ('pyautogui', PyAutoGuiBackend),
+            ('arduino_hid', _create_arduino_backend),
+            ('ctypes_raw', lambda: CtypesRawBackend()),
+            ('interception', lambda: InterceptionBackend()),
+            ('pyautogui', lambda: PyAutoGuiBackend()),
         ]
         
-        for name, BackendClass in backends_to_try:
+        for name, create_func in backends_to_try:
             try:
-                backend = BackendClass()
-                if backend.is_available():
+                backend = create_func()
+                if backend and backend.is_available():
                     logger.info(f"[InputBackend] 使用 {name} 后端")
                     _current_backend = backend
+                    if name == 'arduino_hid':
+                        _arduino_backend = backend
                     return backend
             except Exception as e:
                 logger.debug(f"[InputBackend] {name} 不可用: {e}")
@@ -521,6 +531,15 @@ def get_input_backend(backend_type: str = 'auto') -> InputBackend:
         # 兜底使用 pyautogui
         logger.warning("[InputBackend] 降级使用 pyautogui（容易被检测）")
         _current_backend = PyAutoGuiBackend()
+    
+    elif backend_type == 'arduino_hid':
+        _current_backend = _create_arduino_backend()
+        _arduino_backend = _current_backend
+        if not _current_backend or not _current_backend.is_available():
+            logger.warning("[InputBackend] Arduino HID 不可用，尝试 ctypes_raw")
+            _current_backend = CtypesRawBackend()
+            if not _current_backend.is_available():
+                _current_backend = PyAutoGuiBackend()
         
     elif backend_type == 'ctypes_raw':
         _current_backend = CtypesRawBackend()
@@ -542,6 +561,16 @@ def get_input_backend(backend_type: str = 'auto') -> InputBackend:
     return _current_backend
 
 
+def _create_arduino_backend():
+    '''创建Arduino HID后端'''
+    try:
+        from src.input.ArduinoHIDBackend import ArduinoHIDBackend
+        return ArduinoHIDBackend(auto_detect=True)
+    except Exception as e:
+        logger.debug(f"[InputBackend] 创建Arduino后端失败: {e}")
+        return None
+
+
 def init_input_backend(cfg: dict) -> InputBackend:
     '''
     根据配置初始化输入后端
@@ -552,5 +581,22 @@ def init_input_backend(cfg: dict) -> InputBackend:
     返回：
         初始化后的 InputBackend 实例
     '''
+    global _arduino_backend
+    
     backend_type = cfg.get('anti_detect', {}).get('input_backend', 'auto')
+    
+    # 如果配置了Arduino，使用配置参数
+    if backend_type == 'arduino_hid':
+        try:
+            from src.input.ArduinoHIDBackend import create_arduino_hid_backend
+            backend = create_arduino_hid_backend(cfg)
+            if backend:
+                _arduino_backend = backend
+                if backend.is_available():
+                    global _current_backend
+                    _current_backend = backend
+                    return backend
+        except Exception as e:
+            logger.warning(f"[InputBackend] 创建配置Arduino后端失败: {e}")
+    
     return get_input_backend(backend_type)

@@ -35,6 +35,7 @@ if is_mac():
         'Advanced Settings': (750, 800),
         'Game Window Viz': (850, 430), # smaller for macbook screen
         'Route Map Viz': (400, 400),
+        'Arduino HID': (700, 600),
     }
 else:
     TAB_WINDOW_SIZE = {
@@ -42,6 +43,7 @@ else:
         'Advanced Settings': (750, 800),
         'Game Window Viz': (1280, 650),
         'Route Map Viz': (800, 800),
+        'Arduino HID': (800, 700),
     }
 
 ADV_SETTINGS_HIDE = ['key', 'bot'] # cfg tile here will not shown in advanced settings tabs
@@ -87,12 +89,14 @@ class MainWindow(QMainWindow):
         self.tab_advance_setting = self.setup_advance_setting_tab()
         self.tab_game_window_viz = self.setup_game_window_viz_tab()
         self.tab_route_map_viz = self.setup_route_map_viz_tab()
+        self.tab_arduino_hid = self.setup_arduino_hid_tab()
 
         # Add tabs to tab widget
         self.tabs.addTab(self.tab_main, "Main")
         self.tabs.addTab(self.tab_advance_setting, "Advanced Settings")
         self.tabs.addTab(self.tab_game_window_viz, "Game Window Viz")
         self.tabs.addTab(self.tab_route_map_viz, "Route Map Viz")
+        self.tabs.addTab(self.tab_arduino_hid, "Arduino HID")
 
         # Change tabs signals
         self.tabs.currentChanged.connect(self.on_tab_changed)
@@ -109,6 +113,7 @@ class MainWindow(QMainWindow):
 
         # Signal
         self.request_close.connect(self.close)
+
 
     def setup_main_tab(self):
         '''
@@ -218,6 +223,41 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.route_map_canvas)
 
         return tab_route_map_viz_tab
+
+    def setup_arduino_hid_tab(self):
+        '''
+        Setup Arduino HID tab for connection status and logs
+        '''
+        from src.ui.ArduinoHIDWidget import ArduinoHIDPanel
+        from src.input.InputBackend import get_arduino_backend
+
+        tab_arduino_hid = QWidget()
+        layout = QVBoxLayout()
+        tab_arduino_hid.setLayout(layout)
+
+        # Create Arduino HID panel
+        self.arduino_hid_panel = ArduinoHIDPanel("Arduino HID Controller")
+        layout.addWidget(self.arduino_hid_panel)
+
+        # Try to get Arduino backend and set it
+        arduino_backend = get_arduino_backend()
+        if arduino_backend:
+            self.arduino_hid_panel.set_backend(arduino_backend)
+            logger.info("[UI] Arduino HID panel connected to backend")
+        else:
+            logger.info("[UI] Arduino HID backend not available")
+
+        return tab_arduino_hid
+
+    def update_arduino_backend(self):
+        '''
+        Update Arduino backend reference (call after input backend initialized)
+        '''
+        from src.input.InputBackend import get_arduino_backend
+        arduino_backend = get_arduino_backend()
+        if arduino_backend and hasattr(self, 'arduino_hid_panel'):
+            self.arduino_hid_panel.set_backend(arduino_backend)
+            logger.info("[UI] Arduino HID panel backend updated")
 
     def save_ui_state(self):
         path = os.path.join(os.path.expanduser("~"), ".maplebot_ui_state.json")
@@ -775,6 +815,11 @@ class MainWindow(QMainWindow):
             self.update_cfg_from_main_ui()
             self.apply_config_to_ui()
 
+        elif tab_name == "Arduino HID":
+            self.controller.disable_bot_viz()
+            # Update Arduino backend reference
+            self.update_arduino_backend()
+
         else:
             logger.error(f"[UI] Unexpected tab name: {tab_name}")
             self.controller.disable_bot_viz()
@@ -878,6 +923,20 @@ class MainWindow(QMainWindow):
             self.button_record.setStyleSheet("")
             self.controller.stop_recording()
 
+    def _safe_int(self, text, default=0):
+        '''Safely convert text to int, return default if empty or invalid'''
+        try:
+            return int(text) if text.strip() else default
+        except (ValueError, AttributeError):
+            return default
+
+    def _safe_float(self, text, default=0.0):
+        '''Safely convert text to float, return default if empty or invalid'''
+        try:
+            return float(text) if text.strip() else default
+        except (ValueError, AttributeError):
+            return default
+
     def update_cfg_from_main_ui(self):
         '''
         Collect setting from UI framework
@@ -888,15 +947,15 @@ class MainWindow(QMainWindow):
         if self.attack_mode.currentText() == "Basic":
             self.cfg["bot"]["attack"] = "directional"
             self.cfg["key"]["directional_attack"] = self.basic_attack_key.get_key()
-            self.cfg["directional_attack"]["range_x"] = int(self.attack_range_x.text())
-            self.cfg["directional_attack"]["range_y"] = int(self.attack_range_y.text())
-            self.cfg["directional_attack"]["cooldown"] = float(self.attack_cooldown.text())
+            self.cfg["directional_attack"]["range_x"] = self._safe_int(self.attack_range_x.text(), 350)
+            self.cfg["directional_attack"]["range_y"] = self._safe_int(self.attack_range_y.text(), 70)
+            self.cfg["directional_attack"]["cooldown"] = self._safe_float(self.attack_cooldown.text(), 0.9)
         elif self.attack_mode.currentText() == "AOE Skill":
             self.cfg["bot"]["attack"] = "aoe_skill"
             self.cfg["key"]["aoe_skill"] = self.basic_attack_key.get_key()
-            self.cfg["aoe_skill"]["range_x"] = int(self.attack_range_x.text())
-            self.cfg["aoe_skill"]["range_y"] = int(self.attack_range_y.text())
-            self.cfg["aoe_skill"]["cooldown"] = float(self.attack_cooldown.text())
+            self.cfg["aoe_skill"]["range_x"] = self._safe_int(self.attack_range_x.text(), 400)
+            self.cfg["aoe_skill"]["range_y"] = self._safe_int(self.attack_range_y.text(), 170)
+            self.cfg["aoe_skill"]["cooldown"] = self._safe_float(self.attack_cooldown.text(), 0.05)
         else:
             logger.error(f"[update_cfg_from_main_ui] Unsupported attack mode: {self.cfg['bot']['attack']}")
         # Key binding gbox
@@ -907,13 +966,13 @@ class MainWindow(QMainWindow):
         self.cfg["key"]["return_home"] = self.return_home_key.get_key()
         # Auto Add HP
         if self.checkbox_auto_add_hp.isChecked():
-            self.cfg["health_monitor"]["add_hp_percent"] = int(self.add_hp_percent.text())
+            self.cfg["health_monitor"]["add_hp_percent"] = self._safe_int(self.add_hp_percent.text(), 50)
             self.cfg["key"]["add_hp"] = self.add_hp_key.get_key()
         else:
             self.cfg["health_monitor"]["add_hp_percent"] = 0
         # Auto Add MP
         if self.checkbox_auto_add_mp.isChecked():
-            self.cfg["health_monitor"]["add_mp_percent"] = int(self.add_mp_percent.text())
+            self.cfg["health_monitor"]["add_mp_percent"] = self._safe_int(self.add_mp_percent.text(), 50)
             self.cfg["key"]["add_mp"] = self.add_mp_key.get_key()
         else:
             self.cfg["health_monitor"]["add_mp_percent"] = 0
