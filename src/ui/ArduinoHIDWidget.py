@@ -2,8 +2,17 @@
 Arduino HID UI 组件
 
 提供用于显示Arduino连接状态、输入输出日志和错误日志的UI组件
+
+线程安全说明:
+-------------
+Arduino 后端在后台线程中运行（心跳线程、批处理线程），回调函数可能从这些线程调用。
+为保证线程安全，所有 UI 更新必须通过 Qt Signal/Slot 机制传递到主线程执行。
 '''
 
+# Standard Import
+import threading
+
+# Library Import
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, 
     QPushButton, QPlainTextEdit, QTabWidget, QFormLayout,
@@ -12,6 +21,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, Slot
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 
+# Local Import
 from datetime import datetime
 from typing import Optional
 
@@ -28,7 +38,14 @@ class ConnectionStatusWidget(QWidget):
     - 设备ID
     - 延迟
     - 错误信息
+    
+    线程安全:
+    --------
+    重连/断开操作在后台线程执行，通过信号通知 UI 更新
     '''
+    
+    # 信号: 后台操作完成后通知 UI
+    operation_finished = Signal(str, bool)  # (operation_name, success)
     
     # 状态颜色映射
     STATUS_COLORS = {
@@ -59,6 +76,9 @@ class ConnectionStatusWidget(QWidget):
         
         # 后端引用
         self._backend = None
+        
+        # 连接信号到槽
+        self.operation_finished.connect(self._on_operation_finished)
     
     def _setup_ui(self):
         layout = QFormLayout(self)
@@ -160,14 +180,69 @@ class ConnectionStatusWidget(QWidget):
             logger.warning(f"[ConnectionStatusWidget] Update failed: {e}")
     
     def _on_reconnect_clicked(self):
-        '''重新连接'''
+        '''重新连接 - 在后台线程执行避免阻塞 UI'''
         if self._backend:
-            self._backend.reconnect()
+            # 禁用按钮，显示操作中状态
+            self._reconnect_btn.setEnabled(False)
+            self._reconnect_btn.setText("连接中...")
+            self._disconnect_btn.setEnabled(False)
+            
+            # 在后台线程执行耗时操作
+            thread = threading.Thread(
+                target=self._do_reconnect,
+                daemon=True,
+                name="Arduino-Reconnect"
+            )
+            thread.start()
+    
+    def _do_reconnect(self):
+        '''后台线程执行重连'''
+        try:
+            result = self._backend.reconnect()
+            self.operation_finished.emit("reconnect", result)
+        except Exception as e:
+            logger.warning(f"[ConnectionStatusWidget] Reconnect failed: {e}")
+            self.operation_finished.emit("reconnect", False)
     
     def _on_disconnect_clicked(self):
-        '''断开连接'''
+        '''断开连接 - 在后台线程执行避免阻塞 UI'''
         if self._backend:
+            # 禁用按钮，显示操作中状态
+            self._disconnect_btn.setEnabled(False)
+            self._disconnect_btn.setText("断开中...")
+            self._reconnect_btn.setEnabled(False)
+            
+            # 在后台线程执行耗时操作
+            thread = threading.Thread(
+                target=self._do_disconnect,
+                daemon=True,
+                name="Arduino-Disconnect"
+            )
+            thread.start()
+    
+    def _do_disconnect(self):
+        '''后台线程执行断开'''
+        try:
             self._backend.disconnect()
+            self.operation_finished.emit("disconnect", True)
+        except Exception as e:
+            logger.warning(f"[ConnectionStatusWidget] Disconnect failed: {e}")
+            self.operation_finished.emit("disconnect", False)
+    
+    @Slot(str, bool)
+    def _on_operation_finished(self, operation: str, success: bool):
+        '''后台操作完成后恢复 UI 状态 (主线程)'''
+        # 恢复按钮状态
+        self._reconnect_btn.setEnabled(True)
+        self._reconnect_btn.setText("重新连接")
+        self._disconnect_btn.setEnabled(True)
+        self._disconnect_btn.setText("断开连接")
+        
+        # 立即更新显示
+        self._update_display()
+        
+        if not success:
+            logger.warning(f"[ConnectionStatusWidget] {operation} operation failed")
 
 
 class HIDLogWidget(QWidget):
@@ -175,15 +250,25 @@ class HIDLogWidget(QWidget):
     HID 日志显示组件
     
     实时显示所有HID命令的输入输出
+    
+    线程安全:
+    --------
+    日志回调可能从后端线程调用，通过 Qt Signal 传递到主线程处理
     '''
     
     MAX_LOG_LINES = 500
+    
+    # 信号: 从任意线程安全地传递日志到主线程
+    log_entry_received = Signal(object)  # HIDLogEntry
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
         self._backend = None
         self._log_callback = None
+        
+        # 连接信号到槽 (确保在主线程处理)
+        self.log_entry_received.connect(self._process_log_entry)
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -248,7 +333,21 @@ class HIDLogWidget(QWidget):
             backend.get_hid_logger().register_callback(self._log_callback)
     
     def _on_log_entry(self, entry):
-        '''日志条目回调'''
+        '''
+        日志条目回调 - 可能从任意线程调用
+        
+        通过信号将日志传递到主线程处理，确保线程安全
+        '''
+        # 发送信号到主线程 (线程安全)
+        self.log_entry_received.emit(entry)
+    
+    @Slot(object)
+    def _process_log_entry(self, entry):
+        '''
+        处理日志条目 - 在主线程执行
+        
+        这个方法由 log_entry_received 信号触发，保证在 GUI 线程执行
+        '''
         if self._is_paused:
             return
         
@@ -304,7 +403,8 @@ class HIDLogWidget(QWidget):
         if self._backend:
             logs = self._backend.get_hid_logger().get_recent_logs(self.MAX_LOG_LINES)
             for entry in logs:
-                self._on_log_entry(entry)
+                # 直接调用处理方法，因为已在主线程中
+                self._process_log_entry(entry)
     
     def _clear_logs(self):
         '''清空日志'''
@@ -323,14 +423,25 @@ class ErrorLogWidget(QWidget):
     错误日志显示组件
     
     专门显示错误信息
+    
+    线程安全:
+    --------
+    日志回调可能从后端线程调用，通过 Qt Signal 传递到主线程处理
     '''
     
     MAX_LOG_LINES = 200
+    
+    # 信号: 从任意线程安全地传递错误日志到主线程
+    error_entry_received = Signal(object)  # HIDLogEntry
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
         self._backend = None
+        self._log_callback = None
+        
+        # 连接信号到槽 (确保在主线程处理)
+        self.error_entry_received.connect(self._process_error_entry)
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -368,21 +479,43 @@ class ErrorLogWidget(QWidget):
     
     def set_backend(self, backend):
         '''设置后端'''
+        # 注销旧回调 (防止重复注册)
+        if self._backend and self._log_callback:
+            try:
+                self._backend.get_hid_logger().unregister_callback(self._log_callback)
+            except:
+                pass
+        
         self._backend = backend
         
         if backend:
             # 注册错误日志回调
-            backend.get_hid_logger().register_callback(self._on_log_entry)
+            self._log_callback = self._on_log_entry
+            backend.get_hid_logger().register_callback(self._log_callback)
             self._refresh_errors()
     
     def _on_log_entry(self, entry):
-        '''日志条目回调'''
+        '''
+        日志条目回调 - 可能从任意线程调用
+        
+        通过信号将错误日志传递到主线程处理，确保线程安全
+        '''
         if not entry.success or entry.direction == 'ERR':
-            timestamp = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
-            line = f"[{timestamp}] {entry.error_message or 'Unknown error'}"
-            if entry.command:
-                line += f" (cmd: {entry.command})"
-            self._error_text.appendPlainText(line)
+            # 发送信号到主线程 (线程安全)
+            self.error_entry_received.emit(entry)
+    
+    @Slot(object)
+    def _process_error_entry(self, entry):
+        '''
+        处理错误日志条目 - 在主线程执行
+        
+        这个方法由 error_entry_received 信号触发，保证在 GUI 线程执行
+        '''
+        timestamp = entry.timestamp.strftime("%H:%M:%S.%f")[:-3]
+        line = f"[{timestamp}] {entry.error_message or 'Unknown error'}"
+        if entry.command:
+            line += f" (cmd: {entry.command})"
+        self._error_text.appendPlainText(line)
     
     def _refresh_errors(self):
         '''刷新错误列表'''
