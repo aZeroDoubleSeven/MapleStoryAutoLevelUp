@@ -96,7 +96,7 @@
 | `finding_rune` | `FindingRuneState` | 寻找符文位置，继续狩猎 |
 | `near_rune` | `NearRuneState` | 接近符文，尝试触发 |
 | `solving_rune` | `SolvingRuneState` | 解决方向键小游戏 |
-| `auxiliary` | `AuxiliaryState` | 空闲/辅助模式 |
+| `aux` | `AuxiliaryState` | 空闲/辅助模式 |
 
 ---
 
@@ -466,17 +466,34 @@ WINDOW_WORKING_SIZE = (1296, 700)  # (宽度, 高度)
 
 ### 小地图玩家颜色
 ```python
+# 配置路径: cfg["minimap"]["player_color"]
 minimap_player_color = (136, 255, 255)  # BGR 格式
 ```
 
 ### 路线图颜色编码
+
+命令格式为 `"左右 上下 动作"` 的三段格式：
+
 ```yaml
+# 主要移动颜色编码 (color_code)
 route_color_code:
-  "0,255,0": "left"      # 绿色 = 向左
-  "255,0,0": "right"     # 蓝色 = 向右
-  "0,255,255": "up"      # 黄色 = 向上
-  "255,255,0": "down"    # 青色 = 向下
-  "0,0,255": "goal"      # 红色 = 目标点
+  "255,0,0": "left none none"       # 🔴 红色 = 向左移动
+  "0,0,255": "right none none"      # 🔵 蓝色 = 向右移动
+  "255,127,0": "left none jump"     # 🟠 橙色 = 向左跳跃
+  "0,255,255": "right none jump"    # 🟦 青色 = 向右跳跃
+  "127,255,0": "none down jump"     # 💚 黄绿色 = 下跳
+  "255,0,255": "none none jump"     # 💜 紫色 = 原地跳
+  "0,255,127": "stop stop stop"     # 🟢 浅绿色 = 停止
+  "255,255,0": "none none goal"     # 🟨 黄色 = 目标点（切换路线）
+  "255,0,127": "none up teleport"   # 🌸 粉色 = 向上传送
+  "127,0,255": "none down teleport" # 🟪 紫色 = 向下传送
+  "0,127,0": "left none teleport"   # 🟩 深绿色 = 向左传送
+  "139,69,19": "right none teleport"# 🟫 棕色 = 向右传送
+
+# 上下移动颜色编码 (color_code_up_down)
+route_color_code_up_down:
+  "127,127,127": "none up none"     # ⚪ 灰色 = 向上爬绳
+  "255,255,127": "none down none"   # 🟡 浅黄色 = 向下爬绳
 ```
 
 ### 硬件扫描码
@@ -535,7 +552,7 @@ profiler.report()  # 打印统计
 ### 3. 怪物检测不准确
 - 检查 `minimaps/{map}/mobs/` 下的模板图片
 - 调整 `mob_detection.threshold` 配置
-- 使用 `tools/mobMaker.py` 创建新模板
+- 使用 `tools/mob_maker.py` 创建新模板
 
 ### 4. 键盘输入无效
 - 确保游戏窗口是激活状态
