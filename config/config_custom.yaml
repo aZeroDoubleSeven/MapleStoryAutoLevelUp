@@ -1,0 +1,14 @@
+bot:
+  attack: aoe_skill
+  map: first_barrack
+channel_change:
+  mode: 'true'
+health_monitor:
+  add_hp_percent: 0
+  add_mp_percent: 0
+key:
+  aoe_skill: shift
+  directional_attack: ''
+  jump: alt
+  return_home: ''
+  teleport: ''
