@@ -29,7 +29,7 @@
 
 ✅ 純電腦視覺實作
 
-✅ 模擬真實鍵盤輸入
+✅ 模擬真實鍵盤輸入（支援多種輸入後端）
 
 ✅ 友善的使用者介面
 | ![Main Tab](media/main_tab.png) | ![Advanced Tab](media/adv_settings_tab.png) |
@@ -50,6 +50,47 @@
 ✅ 支援全球與台服 Artale 伺服器
 
 ✅ 支援英文與繁體中文
+
+## 輸入後端
+
+本專案支援多種鍵盤輸入後端，以繞過反作弊檢測：
+
+| 後端 | 安全性 | 延遲 | 需求 | 推薦度 |
+|------|--------|------|------|--------|
+| **Arduino HID** | ★★★★★ | 5-15ms | Arduino 硬體 | 最高 |
+| **ctypes_raw** | ★★★☆☆ | <1ms | 無 | 推薦 |
+| **interception** | ★★★★☆ | <1ms | 驅動 + 重啟 | 高 |
+| **pyautogui** | ★☆☆☆☆ | <1ms | 無 | 不推薦 |
+
+### Arduino HID（最安全）
+
+使用真實的 Arduino 硬體（Pro Micro、Leonardo 等）來類比鍵盤輸入。由於輸入來自真實 USB 設備，完全無法被反作弊系統檢測。
+
+**支援的硬體：**
+- Pro Micro（推薦，約 ¥15-20）
+- Arduino Leonardo
+- Teensy 2.0/4.0
+- 任何帶 ATmega32U4 晶片的開發板
+
+**快速開始：**
+```bash
+# 1. 上傳韌體到 Arduino
+#    在 Arduino IDE 中開啟 arduino/MapleHID/MapleHID.ino 並上傳
+
+# 2. 安裝 pyserial
+pip install pyserial
+
+# 3. 測試連接
+python tests/test_arduino_hid.py --port COM5 --quick
+
+# 4. 在 config_custom.yaml 中配置
+# anti_detect:
+#   input_backend: "arduino_hid"
+#   arduino:
+#     auto_detect: true
+```
+
+詳細設定指南請參考 [Arduino HID 使用指南](docs/ARDUINO_HID_GUIDE.md)。
 
 ## 環境需求
 * Windows11/MacOS

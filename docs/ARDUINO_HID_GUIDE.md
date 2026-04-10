@@ -57,7 +57,22 @@ Arduino HID 是一种通过真实硬件设备模拟键盘/鼠标输入的方案�
 5. 点击上传按钮 (→)
 6. 等待上传完成，看到 "Done uploading"
 
-### 第四步：配置软件
+### 第四步：测试连接
+
+```bash
+# 列出所有可用端口
+python tests/test_arduino_hid.py --list
+
+# 快速测试连接（需要指定端口）
+python tests/test_arduino_hid.py --port COM5 --quick
+
+# 完整功能测试
+python tests/test_arduino_hid.py --port COM5
+```
+
+**注意:** 上传固件后，Arduino 的 COM 端口可能会改变（通常是 COM 编号增加）。使用 `--list` 查看当前端口。
+
+### 第五步：配置软件
 
 在 `config/config_custom.yaml` 中添加:
 
@@ -65,42 +80,32 @@ Arduino HID 是一种通过真实硬件设备模拟键盘/鼠标输入的方案�
 anti_detect:
   input_backend: "arduino_hid"
   arduino:
-    port: ""              # 留空自动检测，或指定如 "COM3"
+    port: ""              # 留空自动检测，或指定如 "COM5"
     auto_detect: true     # 自动检测端口
     enable_batch: true    # 启用批量命令（推荐）
 ```
 
-### 第五步：安装 Python 依赖
+### 第六步：安装 Python 依赖
 
 ```bash
 pip install pyserial
 ```
 
-### 第六步：测试
+## UI 界面使用
 
-```bash
-python tests/test_arduino_hid.py
-```
-
-## 使用方法
-
-### 启动程序
-
-程序会自动检测并连接 Arduino 设备：
-
-```
-[ArduinoHIDBackend] 自动检测Arduino端口...
-[ArduinoHIDBackend] 找到设备: COM3 (Arduino Leonardo)
-[ArduinoHIDBackend] 连接成功: COM3
-```
-
-### UI 界面
-
-程序运行后，在 UI 中切换到 "Arduino HID" 标签页，可以看到：
+程序运行后，切换到 **"Arduino HID"** 标签页，可以看到：
 
 1. **连接状态**: 显示当前连接状态、端口、设备ID、延迟
 2. **命令日志**: 实时显示发送和接收的所有命令
 3. **错误日志**: 显示错误信息
+
+### 重要提示
+
+> **UI 连接状态说明：**
+> - 启动程序后，Arduino HID 面板初始显示 "未连接"
+> - 点击 **Start** 按钮启动机器人后，Arduino HID 后端才会被初始化
+> - 此时切换到 "Arduino HID" 标签页，即可看到连接状态
+> - 即使配置使用其他输入后端（如 ctypes_raw），Arduino HID 面板仍会显示连接状态
 
 ### 重新连接
 
@@ -167,6 +172,7 @@ arduino:
 2. 尝试换一个 USB 口
 3. 检查设备管理器中是否有 Arduino 设备
 4. 重新安装 Arduino 驱动
+5. 使用 `--list` 参数查看当前端口
 
 ### 问题: 上传失败
 

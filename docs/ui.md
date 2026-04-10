@@ -137,6 +137,8 @@ QTabWidget (tabs)
 | `update_cfg_from_main_ui()` | - | 从UI收集配置 |
 | `save_ui_state()` | - | 保存UI状态 |
 | `load_ui_state()` | - | 加载UI状态 |
+| `refresh_arduino_panel()` | - | 刷新 Arduino HID 面板后端引用 |
+| `update_arduino_backend()` | - | 更新 Arduino 后端引用 |
 
 #### 事件处理
 
@@ -284,7 +286,7 @@ def __init__(self):
 | 方法 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
 | `update_signal(ui)` | `MainWindow` | - | 连接信号到UI |
-| `start_bot(cfg_path)` | `str` | `int` | 启动机器人 (0=成功, -1=失败) |
+| `start_bot(cfg_path)` | `str` | `int` | 启动机器人 (0=成功, -1=失败)，并刷新 Arduino HID 面板 |
 | `pause_bot()` | - | - | 暂停机器人 |
 | `terminate_bot()` | - | - | 终止机器人 |
 | `take_screenshot()` | - | - | 截图 |

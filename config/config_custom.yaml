@@ -1,6 +1,6 @@
 bot:
   attack: aoe_skill
-  map: first_barrack
+  map: the_path_of_time_1_for_mage
 channel_change:
   mode: 'true'
 health_monitor:

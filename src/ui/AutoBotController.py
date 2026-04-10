@@ -92,6 +92,10 @@ class AutoBotController(QObject):
             logger.error(f"[start_bot] {e}")
             return -1 # Start fail
 
+        # 刷新 UI 的 Arduino HID 面板引用（在输入后端初始化完成后）
+        if self.ui:
+            self.ui.refresh_arduino_panel()
+
         return 0 # start bot success
 
     def pause_bot(self):

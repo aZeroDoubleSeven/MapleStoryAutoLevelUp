@@ -147,6 +147,30 @@ while not is_terminated:
 3. **interception** - 内核级模拟（需要驱动+重启）
 4. **pyautogui** - 兜底方案（容易被检测）
 
+### Arduino HID UI 初始化流程
+
+Arduino HID 面板的初始化流程如下：
+
+```
+1. 程序启动
+   ↓
+2. UI 初始化 → setup_arduino_hid_tab()
+   ↓ （此时 Arduino 后端尚未初始化，面板显示"未连接"）
+3. 用户点击 "Start" 按钮
+   ↓
+4. start_bot() → init_input_backend()
+   ↓ （Arduino HID 后端被初始化并尝试连接）
+5. refresh_arduino_panel() → 更新面板引用
+   ↓
+6. 切换到 "Arduino HID" 标签页
+   ↓ （此时应显示"已连接"）
+```
+
+**关键代码变更：**
+- `AutoBotController.start_bot()`: 新增调用 `refresh_arduino_panel()`
+- `MainWindow.refresh_arduino_panel()`: 新增方法，用于刷新面板后端引用
+- `init_input_backend()`: 新增逻辑，始终尝试初始化 Arduino HID（用于 UI 显示）
+
 ### Arduino 命令协议
 
 | 命令 | 格式 | 说明 |

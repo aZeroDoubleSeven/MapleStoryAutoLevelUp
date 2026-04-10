@@ -30,7 +30,7 @@ This work purely-based on Computer Vision technique, it doesn't required access 
 
 ✅ Purely Computer Vision
 
-✅ Simulates real keyboard input
+✅ Simulates real keyboard input (Multiple input backends supported)
 
 ✅ User friendly UI
 | ![Main Tab](media/main_tab.png) | ![Advanced Tab](media/adv_settings_tab.png) |
@@ -51,6 +51,47 @@ This work purely-based on Computer Vision technique, it doesn't required access 
 ✅ Support global/taiwan Artale server
 
 ✅ Support English and Traditional Chinese Language
+
+## Input Backends
+
+The project supports multiple keyboard input backends to bypass anti-cheat detection:
+
+| Backend | Security | Latency | Requirement | Recommended |
+|---------|----------|---------|-------------|-------------|
+| **Arduino HID** | ★★★★★ | 5-15ms | Arduino hardware | Highest |
+| **ctypes_raw** | ★★★☆☆ | <1ms | None | Recommended |
+| **interception** | ★★★★☆ | <1ms | Driver + Reboot | High |
+| **pyautogui** | ★☆☆☆☆ | <1ms | None | Not recommended |
+
+### Arduino HID (Most Secure)
+
+Uses real Arduino hardware (Pro Micro, Leonardo, etc.) to simulate keyboard input. Since the input comes from a real USB device, it's completely undetectable by anti-cheat systems.
+
+**Supported Hardware:**
+- Pro Micro (Recommended, ~$5)
+- Arduino Leonardo
+- Teensy 2.0/4.0
+- Any board with ATmega32U4 chip
+
+**Quick Start:**
+```bash
+# 1. Upload firmware to Arduino
+#    Open arduino/MapleHID/MapleHID.ino in Arduino IDE and upload
+
+# 2. Install pyserial
+pip install pyserial
+
+# 3. Test connection
+python tests/test_arduino_hid.py --port COM5 --quick
+
+# 4. Configure in config_custom.yaml
+# anti_detect:
+#   input_backend: "arduino_hid"
+#   arduino:
+#     auto_detect: true
+```
+
+For detailed setup guide, see [Arduino HID Guide](docs/ARDUINO_HID_GUIDE.md).
 
 ## Environment
 * Windows11/MacOS

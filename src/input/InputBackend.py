@@ -585,6 +585,16 @@ def init_input_backend(cfg: dict) -> InputBackend:
     
     backend_type = cfg.get('anti_detect', {}).get('input_backend', 'auto')
     
+    # 始终尝试初始化 Arduino HID 后端（用于 UI 显示状态）
+    # 即使配置了其他后端，Arduino 面板也能显示连接状态
+    if _arduino_backend is None:
+        try:
+            from src.input.ArduinoHIDBackend import create_arduino_hid_backend
+            _arduino_backend = create_arduino_hid_backend(cfg)
+        except Exception as e:
+            logger.debug(f"[InputBackend] 初始化Arduino后端失败: {e}")
+            _arduino_backend = None
+    
     # 如果配置了Arduino，使用配置参数
     if backend_type == 'arduino_hid':
         try:

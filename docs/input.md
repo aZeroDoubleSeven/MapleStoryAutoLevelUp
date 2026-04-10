@@ -162,19 +162,24 @@ EXTENDED_KEYS = {'left', 'right', 'up', 'down', 'home', 'end', ...}
 | 函数 | 参数 | 返回值 | 说明 |
 |------|------|--------|------|
 | `get_input_backend` | `backend_type='auto'` | `InputBackend` | 获取输入后端实例 |
-| `init_input_backend` | `cfg: dict` | `InputBackend` | 根据配置初始化后端 |
-| `get_arduino_backend` | - | `ArduinoHIDBackend` | 获取Arduino后端实例 |
+| `init_input_backend` | `cfg: dict` | `InputBackend` | 根据配置初始化后端（同时初始化 Arduino HID 用于 UI 显示） |
+| `get_arduino_backend` | - | `ArduinoHIDBackend` | 获取Arduino后端实例（可能为 None） |
 
 ### 使用示例
 
 ```python
-from src.input.InputBackend import get_input_backend, init_input_backend
+from src.input.InputBackend import get_input_backend, init_input_backend, get_arduino_backend
 
 # 自动选择最佳后端
 backend = get_input_backend('auto')
 
-# 根据配置初始化
+# 根据配置初始化（会同时初始化 Arduino HID 用于 UI 面板显示）
 backend = init_input_backend(cfg)
+
+# 获取 Arduino 后端（用于 UI 面板）
+arduino = get_arduino_backend()
+if arduino:
+    print(f"Arduino 已连接: {arduino._port}")
 
 # 使用后端
 backend.key_down('a')

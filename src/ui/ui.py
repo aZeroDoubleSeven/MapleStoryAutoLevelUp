@@ -249,6 +249,20 @@ class MainWindow(QMainWindow):
 
         return tab_arduino_hid
 
+    def refresh_arduino_panel(self):
+        '''
+        刷新 Arduino HID 面板的后端引用。
+        在 start_bot 成功后调用，此时输入后端已完成初始化。
+        '''
+        if hasattr(self, 'arduino_hid_panel'):
+            from src.input.InputBackend import get_arduino_backend
+            arduino_backend = get_arduino_backend()
+            if arduino_backend:
+                self.arduino_hid_panel.set_backend(arduino_backend)
+                logger.info("[UI] Arduino HID panel backend refreshed")
+            else:
+                logger.info("[UI] Arduino HID backend still not available")
+
     def update_arduino_backend(self):
         '''
         Update Arduino backend reference (call after input backend initialized)
