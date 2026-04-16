@@ -38,11 +38,14 @@
           ▼                    ▼                    ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐
 │  States Layer   │  │  Input Layer    │  │   Utils Layer       │
-│  src/states/    │  │  src/input/     │  │   src/utils/        │
-│  - hunting      │  │  - InputBackend │  │   - common (CV)     │
-│  - patrol       │  │  - ArduinoHID   │  │   - anti_detect     │
-│  - finding_rune │  │  - KeyBoard*    │  │   - logger          │
-│  - solving_rune │  │  - GameCapture  │  │                     │
+│  src/states/   │  │  src/input/     │  │   src/utils/        │
+│  - base_state  │  │  - InputBackend │  │   - common (CV)     │
+│  - hunting     │  │  - ArduinoHID   │  │   - anti_detect     │
+│  - patrol      │  │  - KeyBoard*    │  │   - logger          │
+│  - finding_rune│  │  - GameCapture  │  │   - global_var      │
+│  - near_rune   │  │                 │  │   - ui              │
+│  - solving_rune│  │                 │  │                     │
+│  - auxiliary   │  │                 │  │                     │
 └─────────────────┘  └─────────────────┘  └─────────────────────┘
 ```
 
@@ -54,10 +57,21 @@
 | `FiniteStateMachine` | `engine/FiniteStateMachine.py` | 状态机管理 |
 | `HealthMonitor` | `engine/HealthMonitor.py` | HP/MP 监控和自动喝药 |
 | `RuneSolver` | `engine/RuneSolver.py` | 符文检测和解谜 |
+| `Profiler` | `engine/Profiler.py` | 性能分析 |
 | `KeyBoardController` | `input/KeyBoardController.py` | 键盘命令执行 |
+| `KeyBoardListener` | `input/KeyBoardListener.py` | 键盘监听 |
 | `InputBackend` | `input/InputBackend.py` | 输入后端抽象层 |
+| `ArduinoHIDBackend` | `input/ArduinoHIDBackend.py` | Arduino HID 输入后端 |
+| `CtypesRawBackend` | `input/InputBackend.py` | ctypes 原始输入后端 |
+| `GameWindowCapturor` | `input/GameWindowCapturor.py` | Windows 窗口截图 |
 | `MainWindow` | `ui/ui.py` | 主界面窗口 |
 | `AutoBotController` | `ui/AutoBotController.py` | UI-Engine 中间层 |
+| `ArduinoHIDPanel` | `ui/ArduinoHIDWidget.py` | Arduino HID UI 面板 |
+| `ConnectionStatusWidget` | `ui/ArduinoHIDWidget.py` | 连接状态显示组件 |
+| `HIDLogWidget` | `ui/ArduinoHIDWidget.py` | HID 日志显示组件 |
+| `HumanBehavior` | `utils/anti_detect.py` | 人类行为模拟器 |
+| `TimingRandomizer` | `utils/anti_detect.py` | 时间随机化工具 |
+| `MSLogger` | `utils/logger.py` | 日志系统 |
 
 ---
 
@@ -98,6 +112,27 @@
 | `solving_rune` | `SolvingRuneState` | 解决方向键小游戏 |
 | `aux` | `AuxiliaryState` | 空闲/辅助模式 |
 
+### State 基类方法
+
+```python
+class State:
+    def __init__(self, name, bot):
+        self.name = name
+        self.bot = bot  # reference to MapleStoryAutoLevelUp
+
+    def on_enter(self):        # 进入状态时的钩子
+        pass
+
+    def on_exit(self):          # 退出状态时的钩子
+        pass
+
+    def check_transitions(self):  # 检查状态转换，返回目标状态名或 None
+        pass
+
+    def on_frame(self):          # 每帧执行的逻辑（各状态实现）
+        pass
+```
+
 ---
 
 ## 关键数据流
@@ -108,18 +143,18 @@
 while not is_terminated:
     # 1. 获取游戏画面
     img_frame = capture.get_frame()
-    
+
     # 2. 检测小地图和玩家位置
     minimap_result = get_minimap_loc_size(img_frame)
     loc_player = get_player_location_on_minimap(img_minimap)
-    
+
     # 3. 状态机执行
     fsm.check_transitions()  # 检查状态转换
     current_state.on_frame() # 执行当前状态逻辑
-    
+
     # 4. 状态逻辑产生命令
     # cmd = "{左右} {上下} {动作}"  例: "left none attack"
-    
+
     # 5. 键盘控制器执行命令
     kb.set_command(cmd)
 ```
@@ -132,7 +167,7 @@ while not is_terminated:
 |------|--------|------|
 | 左右 | `left`, `right`, `stop`, `none` | 水平移动 |
 | 上下 | `up`, `down`, `stop`, `none` | 垂直移动（爬绳/下跳） |
-| 动作 | `jump`, `attack`, `teleport`, `add_hp`, `add_mp`, `goal`, `none` | 技能动作 |
+| 动作 | `jump`, `attack`, `teleport`, `add_hp`, `add_mp`, `goal`, `stop`, `none` | 技能动作 |
 
 示例: `"right up jump"` = 右移 + 上移 + 跳跃
 
@@ -146,6 +181,35 @@ while not is_terminated:
 2. **ctypes_raw** - 推荐，使用硬件扫描码（无需安装）
 3. **interception** - 内核级模拟（需要驱动+重启）
 4. **pyautogui** - 兜底方案（容易被检测）
+
+### InputBackend 抽象类
+
+```python
+class InputBackend(ABC):
+    @abstractmethod
+    def key_down(self, key: str) -> None: ...
+
+    @abstractmethod
+    def key_up(self, key: str) -> None: ...
+
+    @abstractmethod
+    def press_key(self, key: str, duration: float = 0.05) -> None: ...
+
+    @abstractmethod
+    def is_available(self) -> bool: ...
+```
+
+### CtypesRawBackend 硬件扫描码
+
+```python
+SCAN_CODES = {
+    'left': 0x4B, 'right': 0x4D, 'up': 0x48, 'down': 0x50,
+    'a': 0x1E, 'space': 0x39, 'enter': 0x1C, ...
+}
+
+EXTENDED_KEYS = {'left', 'right', 'up', 'down', 'home', 'end',
+                 'insert', 'delete', 'pageup', 'pagedown'}
+```
 
 ### Arduino HID UI 初始化流程
 
@@ -179,6 +243,23 @@ Arduino HID 面板的初始化流程如下：
 | 按键释放 | `R{hex}` | `R1E` = 释放 A 键 |
 | 批量命令 | `B{cmd1};{cmd2}` | 减少串口延迟 |
 | 心跳 | `?` | 返回 `OK` |
+| 设备查询 | `I` | 返回设备 ID |
+| 释放所有 | `X` | 释放所有按键 |
+| 鼠标移动 | `M{dx},{dy}` | 移动鼠标 |
+| 鼠标点击 | `C{button}` | 鼠标点击 |
+| 延迟等待 | `W{ms}` | 等待指定毫秒 |
+| 完整按键 | `P{hex}` | 按下后立即释放 |
+
+### ArduinoHIDBackend 关键类
+
+| 类名 | 说明 |
+|------|------|
+| `HIDLogEntry` | 单条 HID 日志记录 (dataclass) |
+| `HIDLogger` | HID 操作日志记录器 |
+| `ConnectionState` | 连接状态枚举 (Disconnected/Connecting/Connected/Error) |
+| `ConnectionInfo` | 连接信息 (dataclass) |
+| `CommandBatcher` | 命令批处理器（合并多次按键减少延迟） |
+| `ArduinoHIDBackend` | 主后端类 |
 
 ---
 
@@ -223,6 +304,9 @@ python tests/test_arduino_hid.py --quick
 
 # List available serial ports
 python tests/test_arduino_hid.py --list
+
+# Run optimization tests
+python tests/test_optimization.py
 ```
 
 ### Building Executable
@@ -241,47 +325,75 @@ pyinstaller --noconsole --onefile src/main.py -p . --icon=media/icon.ico -n Mapl
 ```
 MapleStoryAutoLevelUp/
 ├── src/
-│   ├── main.py                 # UI 启动入口
+│   ├── main.py                           # UI 启动入口
 │   ├── engine/
-│   │   ├── MapleStoryAutoLevelUp.py  # 核心机器人 (~1954行)
-│   │   ├── FiniteStateMachine.py     # 状态机框架
-│   │   ├── HealthMonitor.py          # HP/MP 监控
-│   │   ├── RuneSolver.py             # 符文解谜
-│   │   └── Profiler.py               # 性能分析
+│   │   ├── MapleStoryAutoLevelUp.py      # 核心机器人 (~1954行)
+│   │   ├── FiniteStateMachine.py        # 状态机框架
+│   │   ├── HealthMonitor.py              # HP/MP 监控
+│   │   ├── RuneSolver.py                 # 符文解谜
+│   │   └── Profiler.py                   # 性能分析
 │   ├── states/
-│   │   ├── base_state.py       # State 基类
-│   │   ├── hunting.py          # 狩猎状态（默认）
-│   │   ├── patrol.py           # 巡逻状态
-│   │   ├── finding_rune.py     # 寻找符文
-│   │   ├── near_rune.py        # 接近符文
-│   │   ├── solving_rune.py     # 解决符文
-│   │   └── auxiliary.py        # 辅助状态
+│   │   ├── base_state.py                 # State 基类
+│   │   ├── hunting.py                    # 狩猎状态（默认）
+│   │   ├── patrol.py                     # 巡逻状态
+│   │   ├── finding_rune.py                # 寻找符文
+│   │   ├── near_rune.py                  # 接近符文
+│   │   ├── solving_rune.py               # 解决符文
+│   │   └── auxiliary.py                  # 辅助状态
 │   ├── input/
-│   │   ├── InputBackend.py     # 输入后端抽象 (★重要)
-│   │   ├── ArduinoHIDBackend.py # Arduino HID
-│   │   ├── KeyBoardController.py # 键盘控制
-│   │   ├── KeyBoardListener.py   # 键盘监听
-│   │   ├── GameWindowCapturor.py # Windows 截图
-│   │   └── GameWindowCapturorForMac.py # macOS 截图
+│   │   ├── InputBackend.py               # 输入后端抽象
+│   │   ├── ArduinoHIDBackend.py          # Arduino HID
+│   │   ├── KeyBoardController.py          # 键盘控制
+│   │   ├── KeyBoardListener.py            # 键盘监听
+│   │   ├── GameWindowCapturor.py          # Windows 截图 (windows_capture)
+│   │   └── GameWindowCapturorForMac.py    # macOS 截图
 │   ├── ui/
-│   │   ├── ui.py               # 主窗口 (~1183行)
-│   │   ├── AutoBotController.py # UI-Engine 桥接
-│   │   └── ArduinoHIDWidget.py  # Arduino UI 组件
+│   │   ├── ui.py                         # 主窗口 (~1197行)
+│   │   ├── AutoBotController.py           # UI-Engine 桥接
+│   │   └── ArduinoHIDWidget.py             # Arduino UI 组件
 │   └── utils/
-│       ├── common.py           # 图像处理/配置管理 (~848行)
-│       ├── logger.py           # 日志系统
-│       ├── anti_detect.py      # 反检测/人性化
-│       ├── global_var.py       # 全局常量
-│       └── ui.py               # UI 工具函数
+│       ├── common.py                      # 图像处理/配置管理 (~848行)
+│       ├── logger.py                      # 日志系统
+│       ├── anti_detect.py                 # 反检测/人性化 (~377行)
+│       ├── global_var.py                  # 全局常量
+│       └── ui.py                          # UI 工具函数 (~199行)
 ├── config/
-│   ├── config_default.yaml     # 默认配置（勿修改）
-│   ├── config_custom.yaml      # 用户自定义配置
-│   ├── config_macOS.yaml       # macOS 平台配置
-│   └── config_data.yaml        # 数据库（地图名等）
-├── minimaps/                   # 地图路线图资源
-├── arduino/                    # Arduino 固件
-├── docs/                       # 详细文档
-└── tests/                      # 测试脚本
+│   ├── config_default.yaml                # 默认配置（勿修改）
+│   ├── config_custom.yaml                 # 用户自定义配置
+│   ├── config_macOS.yaml                  # macOS 平台配置
+│   ├── config_data.yaml                   # 数据库（地图名/怪物名映射）
+│   ├── config_cleric.yaml                 # 牧师职业配置
+│   └── legacy/                            # 旧版配置（遗留）
+│       ├── config_legacy.py
+│       └── config.py
+├── tools/                                 # 工具脚本
+│   ├── routeRecorder.py                   # 路线录制工具
+│   ├── mob_maker.py                       # 怪物模板制作工具
+│   ├── AutoDiceRoller.py                  # 自动掷骰子
+│   ├── getPixeColorOnImg.py               # 像素颜色获取
+│   ├── image_masking_experiment.py        # 图像遮罩实验
+│   └── email_test.py                      # 邮件功能测试
+├── arduino/
+│   └── MapleHID/
+│       └── MapleHID.ino                   # Arduino 固件
+├── tests/                                 # 测试脚本
+│   ├── test_arduino_hid.py               # Arduino HID 测试
+│   └── test_optimization.py               # 性能优化测试
+├── docs/                                  # 详细文档
+│   ├── README.md                          # 项目总览
+│   ├── engine.md                          # 引擎模块详解
+│   ├── states.md                          # 状态机状态详解
+│   ├── input.md                           # 输入控制模块详解
+│   ├── ui.md                              # UI 模块详解
+│   ├── utils.md                           # 工具模块详解
+│   ├── ARDUINO_HID_GUIDE.md              # Arduino HID 使用指南
+│   └── 反检测功能说明.md                   # 反检测功能说明
+├── minimaps/                              # 地图路线图资源
+├── legacy/                                # 遗留代码
+│   └── mapleStoryAutoLevelUp_legacy.py
+├── Makefile                               # 构建脚本
+├── build.bat                              # Windows 构建脚本
+└── requirements.txt                       # Python 依赖
 ```
 
 ---
@@ -298,17 +410,17 @@ class NewState(State):
     def on_enter(self):
         # 进入状态时的初始化
         pass
-    
+
     def on_exit(self):
         # 退出状态时的清理
         pass
-    
+
     def check_transitions(self):
         # 返回目标状态名或 None
         if some_condition:
             return "hunting"
         return None
-    
+
     def on_frame(self):
         # 每帧执行的逻辑
         self.bot.kb.set_command("right none attack")
@@ -326,16 +438,16 @@ class NewBackend(InputBackend):
     def key_down(self, key: str) -> None:
         # 实现按键按下
         pass
-    
+
     def key_up(self, key: str) -> None:
         # 实现按键释放
         pass
-    
+
     def press_key(self, key: str, duration: float = 0.05) -> None:
         self.key_down(key)
         time.sleep(duration)
         self.key_up(key)
-    
+
     def is_available(self) -> bool:
         return True  # 检查后端是否可用
 ```
@@ -501,23 +613,23 @@ minimap_player_color = (136, 255, 255)  # BGR 格式
 ```yaml
 # 主要移动颜色编码 (color_code)
 route_color_code:
-  "255,0,0": "left none none"       # 🔴 红色 = 向左移动
+  "255,0,0": "left none none"        # 🔴 红色 = 向左移动
   "0,0,255": "right none none"      # 🔵 蓝色 = 向右移动
   "255,127,0": "left none jump"     # 🟠 橙色 = 向左跳跃
-  "0,255,255": "right none jump"    # 🟦 青色 = 向右跳跃
-  "127,255,0": "none down jump"     # 💚 黄绿色 = 下跳
-  "255,0,255": "none none jump"     # 💜 紫色 = 原地跳
-  "0,255,127": "stop stop stop"     # 🟢 浅绿色 = 停止
-  "255,255,0": "none none goal"     # 🟨 黄色 = 目标点（切换路线）
-  "255,0,127": "none up teleport"   # 🌸 粉色 = 向上传送
-  "127,0,255": "none down teleport" # 🟪 紫色 = 向下传送
+  "0,255,255": "right none jump"     # 🟦 青色 = 向右跳跃
+  "127,255,0": "none down jump"      # 💚 黄绿色 = 下跳
+  "255,0,255": "none none jump"      # 💜 紫色 = 原地跳
+  "0,255,127": "stop stop stop"      # 🟢 浅绿色 = 停止
+  "255,255,0": "none none goal"      # 🟨 黄色 = 目标点（切换路线）
+  "255,0,127": "none up teleport"    # 🌸 粉色 = 向上传送
+  "127,0,255": "none down teleport"  # 🟪 紫色 = 向下传送
   "0,127,0": "left none teleport"   # 🟩 深绿色 = 向左传送
-  "139,69,19": "right none teleport"# 🟫 棕色 = 向右传送
+  "139,69,19": "right none teleport" # 🟫 棕色 = 向右传送
 
 # 上下移动颜色编码 (color_code_up_down)
 route_color_code_up_down:
-  "127,127,127": "none up none"     # ⚪ 灰色 = 向上爬绳
-  "255,255,127": "none down none"   # 🟡 浅黄色 = 向下爬绳
+  "127,127,127": "none up none"      # ⚪ 灰色 = 向上爬绳
+  "255,255,127": "none down none"    # 🟡 浅黄色 = 向下爬绳
 ```
 
 ### 硬件扫描码
@@ -526,6 +638,9 @@ SCAN_CODES = {
     'left': 0x4B, 'right': 0x4D, 'up': 0x48, 'down': 0x50,
     'a': 0x1E, 'space': 0x39, 'enter': 0x1C, ...
 }
+
+EXTENDED_KEYS = {'left', 'right', 'up', 'down', 'home', 'end',
+                 'insert', 'delete', 'pageup', 'pagedown'}
 ```
 
 ---
@@ -552,12 +667,40 @@ python -m src.engine.MapleStoryAutoLevelUp --test_image screenshot_name
 ```python
 from src.engine.Profiler import Profiler
 
-profiler = Profiler()
-profiler.start("detection")
+profiler = Profiler(cfg)
+profiler.reset()
+profiler.start()  # 开始计时
 # ... 执行检测 ...
-profiler.stop("detection")
+profiler.mark("detection")  # 标记阶段
 profiler.report()  # 打印统计
 ```
+
+**Profiler 性能分析标签：**
+- `Image Preprocessing` - 图像预处理
+- `Get Minimap Location and Size` - 小地图检测
+- `Player Location Detection` - 玩家位置检测
+- `Change Channel` - 换频道
+- `Attack WatchDog` - 攻击看门狗
+- `State per-frame behavior` - 状态行为
+- `Debug Window Show` - 调试窗口显示
+
+### 5. 像素颜色获取工具
+```bash
+python tools/getPixeColorOnImg.py
+```
+交互式获取图片中鼠标位置的像素颜色值。
+
+### 6. 怪物模板制作
+```bash
+python tools/mob_maker.py
+```
+创建新的怪物检测模板图片。
+
+### 7. 路线录制
+```bash
+python tools/routeRecorder.py
+```
+录制新的地图移动路线。
 
 ---
 
@@ -592,6 +735,8 @@ profiler.report()  # 打印统计
 
 ## Anti-Detection 最佳实践
 
+### HumanBehavior 类
+
 ```python
 from src.utils.anti_detect import get_human_behavior
 
@@ -614,6 +759,42 @@ if should_pause:
 
 # 5. 更新疲劳度（长时间运行后反应变慢）
 human.update_fatigue()
+
+# 6. 添加移动抖动
+offset = human.add_movement_noise(target_x, target_y)
+
+# 7. 生成类人移动路径
+path = human.get_human_like_path(start, end)
+```
+
+### TimingRandomizer 类
+
+```python
+from src.utils.anti_detect import TimingRandomizer
+
+# 添加随机抖动
+value_jittered = TimingRandomizer.jitter(base_value, variance)
+
+# 带抖动的睡眠
+TimingRandomizer.sleep_with_jitter(base_seconds, variance)
+
+# 获取 Beta 分布随机间隔
+interval = TimingRandomizer.get_random_interval(min_val, max_val)
+```
+
+### Anti-Detect 默认配置
+
+```yaml
+anti_detect:
+  key_duration_base: 0.05          # 基础按键时长
+  key_duration_variance: 0.03      # 时长变化范围
+  action_delay_min: 0.02           # 最小动作延迟
+  action_delay_max: 0.08           # 最大动作延迟
+  attack_cooldown_variance: 0.15   # 攻击冷却变化 ±15%
+  micro_pause_probability: 0.05   # 微停顿概率 5%
+  idle_probability: 0.01           # 闲置概率 1%
+  enable_movement_noise: false    # 移动抖动开关
+  enable_human_path: false        # 类人路径开关
 ```
 
 ---
@@ -628,3 +809,4 @@ human.update_fatigue()
 - `docs/ui.md` - UI 模块详解
 - `docs/utils.md` - 工具模块详解
 - `docs/ARDUINO_HID_GUIDE.md` - Arduino HID 使用指南
+- `docs/反检测功能说明.md` - 反检测功能说明
