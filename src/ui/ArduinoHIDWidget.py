@@ -85,6 +85,12 @@ class ConnectionStatusWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         
+        # 预检测提示标签
+        self._precheck_label = QLabel()
+        self._precheck_label.setStyleSheet("color: #FF9800; font-weight: bold;")
+        self._precheck_label.setWordWrap(True)
+        layout.addRow("", self._precheck_label)
+        
         # 状态指示器
         status_layout = QHBoxLayout()
         self._status_indicator = QLabel("●")
@@ -134,9 +140,28 @@ class ConnectionStatusWidget(QWidget):
         self._backend = backend
         self._update_display()
     
+    def set_precheck_mode(self, enabled: bool):
+        '''设置预检测模式（显示提示信息）'''
+        if enabled:
+            self._precheck_label.setText(
+                "⚠️ 请先连接 Arduino 设备后再启动机器人\n"
+                "Arduino HID 模式需要硬件设备支持"
+            )
+            self._precheck_label.show()
+        else:
+            self._precheck_label.hide()
+    
     def _update_display(self):
         '''更新显示'''
         if not self._backend:
+            # 无后端时显示未连接状态
+            self._status_indicator.setStyleSheet("color: #9E9E9E; font-size: 16px;")
+            self._status_label.setText("未连接")
+            self._port_label.setText("-")
+            self._device_label.setText("-")
+            self._latency_label.setText("-")
+            self._stats_label.setText("-")
+            self._error_label.hide()
             return
         
         try:
@@ -543,18 +568,27 @@ class ArduinoHIDPanel(QGroupBox):
     - 连接状态
     - 输入输出日志
     - 错误日志
+    
+    信号:
+        connection_changed(bool): 连接状态变化时触发
     '''
+    
+    # 信号: Arduino 连接状态变化
+    connection_changed = Signal(bool)  # True=已连接, False=未连接
     
     def __init__(self, title: str = "Arduino HID", parent=None):
         super().__init__(title, parent)
-        self._setup_ui()
         self._backend = None
+        self._precheck_enabled = True  # 预检测模式默认开启
+        self._last_connection_state = False
+        self._setup_ui()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         
         # 状态部分
         self._status_widget = ConnectionStatusWidget()
+        self._status_widget.set_precheck_mode(self._precheck_enabled)
         layout.addWidget(self._status_widget)
         
         # 分隔线
@@ -578,10 +612,45 @@ class ArduinoHIDPanel(QGroupBox):
     
     def set_backend(self, backend):
         '''设置后端'''
+        # 如果后端改变，注销旧回调
+        if self._backend and self._backend != backend:
+            self._log_widget.set_backend(None)
+            self._error_widget.set_backend(None)
+        
         self._backend = backend
         self._status_widget.set_backend(backend)
-        self._log_widget.set_backend(backend)
-        self._error_widget.set_backend(backend)
+        
+        if backend:
+            self._log_widget.set_backend(backend)
+            self._error_widget.set_backend(backend)
+        
+        # 更新预检测模式显示
+        self._status_widget.set_precheck_mode(self._precheck_enabled)
+        
+        # 检查连接状态并发送信号
+        self._check_connection_state()
+    
+    def set_precheck_mode(self, enabled: bool):
+        '''设置预检测模式'''
+        self._precheck_enabled = enabled
+        self._status_widget.set_precheck_mode(enabled)
+    
+    def is_connected(self) -> bool:
+        '''检查是否已连接'''
+        if not self._backend:
+            return False
+        try:
+            info = self._backend.get_connection_info()
+            return info.state == 'connected'
+        except:
+            return False
+    
+    def _check_connection_state(self):
+        '''检查并通知连接状态变化'''
+        connected = self.is_connected()
+        if connected != self._last_connection_state:
+            self._last_connection_state = connected
+            self.connection_changed.emit(connected)
     
     def get_status_widget(self) -> ConnectionStatusWidget:
         '''获取状态组件'''

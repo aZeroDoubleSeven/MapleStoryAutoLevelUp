@@ -24,6 +24,7 @@ class AutoBotController(QObject):
         """
         super().__init__()
         self.ui = None
+        self._precheck_enabled = True  # 预检测模式，默认开启
 
         # Init Auto Bot
         try:
@@ -77,9 +78,21 @@ class AutoBotController(QObject):
     def start_bot(self, cfg_path):
         '''
         Start the bot engine threads
+        
+        Returns:
+            0: 启动成功
+            -1: 启动失败
+            -2: 预检测失败（Arduino未连接）
         '''
         # Get config from ui
         cfg = load_yaml(cfg_path)
+
+        # 预检测：如果选择了 arduino_hid 但未连接，则阻止启动
+        input_backend = cfg.get('anti_detect', {}).get('input_backend', 'auto')
+        if self._precheck_enabled and input_backend == 'arduino_hid':
+            if not self.is_arduino_connected():
+                logger.warning("[start_bot] Arduino HID 模式需要先连接设备")
+                return -2  # 预检测失败
 
         # Auto bot load config
         if self.auto_bot.load_config(cfg) != 0:
@@ -92,9 +105,15 @@ class AutoBotController(QObject):
             logger.error(f"[start_bot] {e}")
             return -1 # Start fail
 
+        # 关闭预检测模式
+        self._precheck_enabled = False
+
         # 刷新 UI 的 Arduino HID 面板引用（在输入后端初始化完成后）
         if self.ui:
             self.ui.refresh_arduino_panel()
+            # 关闭 Arduino HID 面板的预检测提示
+            if hasattr(self.ui, 'arduino_hid_panel'):
+                self.ui.arduino_hid_panel.set_precheck_mode(False)
 
         return 0 # start bot success
 
@@ -122,12 +141,36 @@ class AutoBotController(QObject):
         '''
         self.auto_bot.stop_record()
 
+    def is_arduino_connected(self) -> bool:
+        '''
+        检查 Arduino 是否已连接
+        
+        Returns:
+            True: Arduino 已连接
+            False: Arduino 未连接或后端未初始化
+        '''
+        if not self.ui or not hasattr(self.ui, 'arduino_hid_panel'):
+            return False
+        
+        try:
+            return self.ui.arduino_hid_panel.is_connected()
+        except Exception as e:
+            logger.debug(f"[is_arduino_connected] 检查失败: {e}")
+            return False
+
     def terminate_bot(self):
         '''
         Called when user stop bot or close UI
         '''
         # Terminate all bot threads
         self.auto_bot.terminate_threads()
+        
+        # 重新开启预检测模式
+        self._precheck_enabled = True
+        
+        # 恢复 Arduino HID 面板的预检测提示
+        if self.ui and hasattr(self.ui, 'arduino_hid_panel'):
+            self.ui.arduino_hid_panel.set_precheck_mode(True)
 
     def enable_bot_viz(self):
         '''

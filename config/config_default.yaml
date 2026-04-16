@@ -345,7 +345,7 @@ anti_detect:
   #   - "ctypes_raw": 使用 Windows API 直接调用，添加硬件扫描码（无需重启，推荐）
   #   - "interception": 使用 Interception 驱动（效果最好，但需要安装驱动并重启）
   #   - "pyautogui": 使用 pyautogui（容易被检测，不推荐）
-  input_backend: "ctypes_raw"  # 默认使用 ctypes_raw，无需重启电脑
+  input_backend: "arduino_hid"  # 默认使用 Arduino HID，最安全
   
   # Arduino HID 设置
   # 只有当 input_backend 设置为 "arduino_hid" 时才会使用

@@ -590,8 +590,33 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.button_record)
         button_layout.addLayout(layout_bot_mode)
 
+        # Input Backend Dropdown
+        layout_input_backend = QHBoxLayout()
+        layout_input_backend.setSpacing(8)
+        self.input_backend_combo = QComboBox()
+        self.input_backend_combo.addItems([
+            "arduino_hid",
+            "ctypes_raw",
+            "interception",
+            "pyautogui",
+            "auto"
+        ])
+        self.input_backend_combo.currentTextChanged.connect(self._on_input_backend_changed)
+
+        layout_input_backend.addWidget(QLabel("Input Backend:"))
+        layout_input_backend.addWidget(self.input_backend_combo)
+        layout_input_backend.addStretch()
+
+        # Input backend status
+        self.input_backend_status_label = QLabel()
+        self.input_backend_status_label.setStyleSheet("color: gray;")
+        self.input_backend_status_label.setText("⚠️ 未连接 Arduino，请先在 Arduino HID 标签页连接设备")
+        layout_input_backend.addWidget(self.input_backend_status_label)
+        layout_input_backend.setAlignment(Qt.AlignLeft)
+
         layout.addLayout(button_layout)
         layout.addLayout(load_config_layout)
+        layout.addLayout(layout_input_backend)
 
         gbox.setLayout(layout)
         return gbox
@@ -786,6 +811,15 @@ class MainWindow(QMainWindow):
             index = 2
         self.bot_mode.setCurrentIndex(index)
 
+        # === Input Backend ===
+        input_backend = self.cfg.get("anti_detect", {}).get("input_backend", "arduino_hid")
+        index = self.input_backend_combo.findText(input_backend)
+        if index >= 0:
+            self.input_backend_combo.blockSignals(True)
+            self.input_backend_combo.setCurrentIndex(index)
+            self.input_backend_combo.blockSignals(False)
+            self._on_input_backend_changed(input_backend)
+
         # Map Selection
         for i in range(self.list_widget_maps.count()):
             item = self.list_widget_maps.item(i)
@@ -833,6 +867,8 @@ class MainWindow(QMainWindow):
             self.controller.disable_bot_viz()
             # Update Arduino backend reference
             self.update_arduino_backend()
+            # 更新输入后端状态显示
+            self._on_input_backend_changed(self.input_backend_combo.currentText())
 
         else:
             logger.error(f"[UI] Unexpected tab name: {tab_name}")
@@ -901,7 +937,7 @@ class MainWindow(QMainWindow):
         if self.button_start_pause.isChecked(): # When start autobot
             self.update_cfg_from_main_ui()
 
-            # Save UI config to tmp file
+            # 保存 UI config 到 tmp 文件
             cfg_path = "config/.config_tmp.yaml"
             save_yaml(self.cfg, cfg_path)
 
@@ -912,6 +948,14 @@ class MainWindow(QMainWindow):
                 self.button_start_pause.setText("⏸ Pause (F1)")
                 self.button_start_pause.setStyleSheet("background-color: lightgreen;")
                 self.set_gbox_enabled(False)
+            elif ret == -2:  # 预检测失败
+                # Arduino HID 模式但未连接
+                self.button_start_pause.setChecked(False)
+                self.load_config_error_label.setText(
+                    "⚠️ Arduino HID 模式需要先连接设备\n"
+                    "请到 Arduino HID 标签页连接设备，或切换到其他输入后端"
+                )
+                self.load_config_error_label.setVisible(True)
             else:
                 # Start failed
                 self.button_start_pause.setChecked(False)
@@ -950,6 +994,27 @@ class MainWindow(QMainWindow):
             return float(text) if text.strip() else default
         except (ValueError, AttributeError):
             return default
+
+    def _on_input_backend_changed(self, backend_type: str):
+        '''当输入后端改变时的处理'''
+        self.cfg["anti_detect"]["input_backend"] = backend_type
+
+        # 清除之前的错误提示
+        self.load_config_error_label.setVisible(False)
+
+        # 如果选择了 arduino_hid，检查连接状态
+        if backend_type == "arduino_hid":
+            if self.controller and self.controller.is_arduino_connected():
+                self.input_backend_status_label.setText("✅ Arduino 已连接")
+                self.input_backend_status_label.setStyleSheet("color: green;")
+            else:
+                self.input_backend_status_label.setText("⚠️ 未连接 Arduino，请先在 Arduino HID 标签页连接设备")
+                self.input_backend_status_label.setStyleSheet("color: orange;")
+        else:
+            self.input_backend_status_label.setText(f"使用 {backend_type} 后端")
+            self.input_backend_status_label.setStyleSheet("color: gray;")
+
+        logger.info(f"[UI] 输入后端切换为: {backend_type}")
 
     def update_cfg_from_main_ui(self):
         '''
@@ -1011,6 +1076,9 @@ class MainWindow(QMainWindow):
 
         # Map selection
         self.cfg["bot"]["map"] = self.selected_map
+
+        # Input backend
+        self.cfg["anti_detect"]["input_backend"] = self.input_backend_combo.currentText()
 
     def update_debug_canvas(self, img):
         if img is None:
