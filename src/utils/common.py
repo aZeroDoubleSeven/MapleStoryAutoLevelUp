@@ -4,6 +4,7 @@ Utility functions
 # Standard Import
 import cv2
 import datetime
+import functools
 import os
 import platform
 import smtplib
@@ -144,23 +145,28 @@ def convert_lists_to_tuples(obj):
     else:
         return obj
 
+@functools.lru_cache(maxsize=128)
+def _cached_imread(path, mode):
+    '''
+    Internal cached image loader. Returns raw numpy array.
+    DO NOT modify the returned array — it is shared across all callers.
+    '''
+    img = cv2.imread(path, mode)
+    if img is None:
+        raise ValueError(f"Failed to load image: {path}")
+    return img
+
+
 def load_image(path, mode=cv2.IMREAD_COLOR):
     '''
-    Load image from disk and verify existence.
+    Load image from disk (cached) and return a copy.
+    The returned array is safe to modify; underlying cache is protected.
     '''
     if not os.path.exists(path):
         logger.error(f"Image not found: {path}")
         raise FileNotFoundError(f"Image not found: {path}")
 
-    # Load image
-    img = cv2.imread(path, mode)
-    if img is None:
-        logger.error(f"Failed to load image file: {path}")
-        raise ValueError(f"Failed to load image: {path}")
-
-    logger.info(f"Loaded image: {path}")
-
-    return img
+    return _cached_imread(path, mode).copy()
 
 def nms(monsters, iou_threshold=0.3):
     '''
@@ -352,9 +358,29 @@ def find_pattern_sqdiff(
 
     return min_loc, min_val, False
 
+# Cache for mask results keyed by (id(array), ignore_pixel_color).
+# Only template images (loaded via load_image) should reach this cache
+# because they are cached/copied once and reused.
+_mask_cache: dict = {}
+
+
 def get_mask(img, ignore_pixel_color):
     '''
-    get_mask
+    get_mask — cached for repeated calls on the same template image.
+    Returns a mask array; callers must NOT mutate it (shared cache entry).
+    '''
+    key = (id(img), ignore_pixel_color)
+    if key not in _mask_cache:
+        mask = np.all(img == ignore_pixel_color, axis=2).astype(np.uint8) * 255
+        mask = cv2.bitwise_not(mask)
+        _mask_cache[key] = mask
+    return _mask_cache[key]
+
+
+def get_mask_from_array(img, ignore_pixel_color):
+    '''
+    Non-cached mask for live (per-frame) images.
+    Safe to mutate the returned array.
     '''
     mask = np.all(img == ignore_pixel_color, axis=2).astype(np.uint8) * 255
     mask = cv2.bitwise_not(mask)

@@ -516,6 +516,7 @@ class MainWindow(QMainWindow):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumHeight(150)
+        self.log_output.setMaximumBlockCount(5000)  # prevent unbounded log growth
 
         layout.addWidget(self.log_output)
         gbox.setLayout(layout)
@@ -1085,7 +1086,7 @@ class MainWindow(QMainWindow):
             return
 
         height, width, _ = img.shape
-        qimg = QImage(img.data, width, height, QImage.Format_BGR888)
+        qimg = QImage(img.copy(), width, height, QImage.Format_BGR888)
         pixmap = QPixmap.fromImage(qimg)
 
         # Scale the image to fit label size but maintain aspect ratio
@@ -1102,7 +1103,7 @@ class MainWindow(QMainWindow):
             return
 
         height, width, _ = img.shape
-        qimg = QImage(img.data, width, height, QImage.Format_BGR888)
+        qimg = QImage(img.copy(), width, height, QImage.Format_BGR888)
         pixmap = QPixmap.fromImage(qimg)
 
         scaled_pixmap = pixmap.scaled(

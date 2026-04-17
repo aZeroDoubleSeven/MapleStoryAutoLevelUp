@@ -42,6 +42,10 @@ class HealthMonitor:
         self.img_frame = None
         self.frame_lock = threading.Lock()
 
+        # Pre-allocated buffers for get_hp_mp_exp_percent (zero-allocation per call)
+        self._buf_gray = None
+        self._buf_white_mask = None
+
         # FPS settings
         self.fps_limit = self.cfg["health_monitor"]["fps_limit"]
         self.fps = 0
@@ -107,10 +111,18 @@ class HealthMonitor:
             return None, None, None
 
         with self.frame_lock:
-            img_frame = self.img_frame.copy()
+            img_frame = self.img_frame
 
-        img_frame_gray = cv2.cvtColor(img_frame, cv2.COLOR_BGR2GRAY)
-        white_mask = cv2.inRange(img_frame_gray, 240, 255)
+        h, w = img_frame.shape[:2]
+        # Ensure pre-allocated buffers match frame size
+        if self._buf_gray is None or self._buf_gray.shape != (h, w):
+            self._buf_gray = np.empty((h, w), dtype=np.uint8)
+        if self._buf_white_mask is None or self._buf_white_mask.shape != (h, w):
+            self._buf_white_mask = np.empty((h, w), dtype=np.uint8)
+
+        cv2.cvtColor(img_frame, cv2.COLOR_BGR2GRAY, dst=self._buf_gray)
+        cv2.inRange(self._buf_gray, 240, 255, dst=self._buf_white_mask)
+        white_mask = self._buf_white_mask
         # cv2.imshow("white_mask", white_mask)
 
         contours, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

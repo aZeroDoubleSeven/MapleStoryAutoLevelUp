@@ -96,6 +96,10 @@ class MapleStoryAutoBot:
         self.img_route = None # route map
         self.img_route_debug = None # route map for visualization
         self.img_minimap = np.zeros((10, 10, 3), dtype=np.uint8) # minimap on game screen
+        # Pre-allocated frame buffers for zero-allocation per-frame processing
+        self._buf_gray = None
+        self._buf_debug = None
+        self._buf_route_debug = None
         # Timers
         self.t_last_frame = time.time() # Last frame timer, for fps calculation
         self.t_watch_dog = time.time() # Last movement timer
@@ -483,14 +487,20 @@ class MapleStoryAutoBot:
         '''
         get_player_location_by_party_red_bar
         '''
-        # Zero out minimap area in the img_frame
-        img_frame = self.img_frame.copy()
-        x, y = self.loc_minimap
-        h, w = self.img_minimap.shape[:2]
-        img_frame[y:y+h, x:x+w] = 0
+        # Only copy the camera area (top of frame) + safe margin around minimap
+        ui_y = self.cfg["ui_coords"]["ui_y_start"]
+        x_mm, y_mm = self.loc_minimap
+        h_mm, w_mm = self.img_minimap.shape[:2]
+        # Copy: full height from 0 to ui_y, plus up to minimap bottom if it's below
+        copy_bottom = max(ui_y, y_mm + h_mm)
+        img_frame = self.img_frame[:copy_bottom, :].copy()
+        # Zero out minimap area in the copy (prevents false red-bar detection)
+        x_off = 0
+        y_off = 0
+        img_frame[y_mm:y_mm+h_mm, x_mm:x_mm+w_mm] = 0
 
         # Get camera area
-        img_camera = img_frame[:self.cfg["ui_coords"]["ui_y_start"], :]
+        img_camera = img_frame[:ui_y, :]
 
         # Convert to HSV
         img_hsv = cv2.cvtColor(img_camera, cv2.COLOR_BGR2HSV)
@@ -964,6 +974,18 @@ class MapleStoryAutoBot:
 
         return cv2.resize(frame_no_title, WINDOW_WORKING_SIZE,
                    interpolation=cv2.INTER_NEAREST)
+
+    def _ensure_frame_buffers(self, frame):
+        '''Lazily initialize pre-allocated buffers to match frame dimensions.'''
+        h, w = frame.shape[:2]
+        if self._buf_gray is None or self._buf_gray.shape != (h, w):
+            self._buf_gray = np.empty((h, w), dtype=np.uint8)
+        if self._buf_debug is None or self._buf_debug.shape != frame.shape:
+            self._buf_debug = np.empty(frame.shape, dtype=np.uint8)
+        if self.img_route is not None:
+            rh, rw = self.img_route.shape[:2]
+            if self._buf_route_debug is None or self._buf_route_debug.shape != (rh, rw, 3):
+                self._buf_route_debug = np.empty((rh, rw, 3), dtype=np.uint8)
 
     def is_player_stuck(self):
         """
@@ -1561,6 +1583,9 @@ class MapleStoryAutoBot:
             # Switch to next route map
             self.idx_routes = (self.idx_routes+1)%len(self.img_routes)
             logger.debug(f"Change to new route:{self.idx_routes}")
+            # Reset route debug buffer so it gets re-allocated to new size
+            self._buf_route_debug = None
+            self.img_route_debug = None
 
     def run_once(self):
         '''
@@ -1587,18 +1612,22 @@ class MapleStoryAutoBot:
         else:
             self.img_frame = img_frame
 
-        # Grayscale game window
-        self.img_frame_gray = cv2.cvtColor(self.img_frame, cv2.COLOR_BGR2GRAY)
+        # Grayscale game window — reuse pre-allocated buffer
+        self._ensure_frame_buffers(self.img_frame)
+        cv2.cvtColor(self.img_frame, cv2.COLOR_BGR2GRAY, dst=self._buf_gray)
+        self.img_frame_gray = self._buf_gray
 
-        # Image for debug viz
+        # Image for debug viz — reuse pre-allocated buffer
         if self.is_show_debug_window:
-            self.img_frame_debug = self.img_frame.copy()
+            self._buf_debug[:] = self.img_frame
+            self.img_frame_debug = self._buf_debug
 
         # Get current route image
         if self.cfg["bot"]["mode"] == "normal":
             self.img_route = self.img_routes[self.idx_routes]
             if self.is_show_debug_window:
-                self.img_route_debug = cv2.cvtColor(self.img_route, cv2.COLOR_RGB2BGR)
+                cv2.cvtColor(self.img_route, cv2.COLOR_RGB2BGR, dst=self._buf_route_debug)
+                self.img_route_debug = self._buf_route_debug
 
         self.profiler.mark("Image Preprocessing")
 

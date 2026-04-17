@@ -69,10 +69,10 @@ class ConnectionStatusWidget(QWidget):
         super().__init__(parent)
         self._setup_ui()
         
-        # 定时更新
+        # 定时更新 (3秒间隔，减少不必要的轮询开销)
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._update_display)
-        self._update_timer.start(1000)  # 每秒更新
+        self._update_timer.start(3000)  # 每3秒更新
         
         # 后端引用
         self._backend = None
@@ -347,15 +347,17 @@ class HIDLogWidget(QWidget):
         if self._backend and self._log_callback:
             try:
                 self._backend.get_hid_logger().unregister_callback(self._log_callback)
-            except:
+            except (AttributeError, TypeError):
                 pass
         
         self._backend = backend
         
         if backend:
-            # 注册新回调
             self._log_callback = self._on_log_entry
-            backend.get_hid_logger().register_callback(self._log_callback)
+            try:
+                backend.get_hid_logger().register_callback(self._log_callback)
+            except AttributeError:
+                pass  # 后端没有 HIDLogger 时静默忽略
     
     def _on_log_entry(self, entry):
         '''
@@ -508,15 +510,17 @@ class ErrorLogWidget(QWidget):
         if self._backend and self._log_callback:
             try:
                 self._backend.get_hid_logger().unregister_callback(self._log_callback)
-            except:
+            except (AttributeError, TypeError):
                 pass
         
         self._backend = backend
         
         if backend:
-            # 注册错误日志回调
             self._log_callback = self._on_log_entry
-            backend.get_hid_logger().register_callback(self._log_callback)
+            try:
+                backend.get_hid_logger().register_callback(self._log_callback)
+            except AttributeError:
+                pass  # 后端没有 HIDLogger 时静默忽略
             self._refresh_errors()
     
     def _on_log_entry(self, entry):

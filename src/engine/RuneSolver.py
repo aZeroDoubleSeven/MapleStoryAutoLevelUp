@@ -24,7 +24,9 @@ class RuneSolver:
         self.cfg = cfg # Configuration
         # Image
         self.img_rune_warning = None
+        self.img_rune_warning_mask = None
         self.img_runes = []
+        self.img_rune_masks = []  # Pre-computed masks for rune parts
         self.img_arrows = {
             "left":
                 [load_image("rune/arrow_left_1.png"),
@@ -43,17 +45,30 @@ class RuneSolver:
                  load_image("rune/arrow_down_2.png"),
                  load_image("rune/arrow_down_3.png"),],
         }
+        # Pre-compute arrow masks (shared across all solve calls)
+        self.img_arrow_masks = {}
+        for direction, arrow_list in self.img_arrows.items():
+            self.img_arrow_masks[direction] = [
+                get_mask(a, (0, 255, 0)) for a in arrow_list
+            ]
         # Load rune images from rune/
         lang = cfg["system"]["language"]
         self.img_rune_warning = load_image(f"rune/rune_warning_{lang}.png",
                                            cv2.IMREAD_GRAYSCALE)
-        self.img_rune_warning_mask = get_mask(load_image(f"rune/rune_warning_{lang}.png"), (0, 255, 0))
+        # Load warning image once for mask computation (same file, same cached array)
+        img_rune_warning_color = load_image(f"rune/rune_warning_{lang}.png")
+        self.img_rune_warning_mask = get_mask(img_rune_warning_color, (0, 255, 0))
 
         self.img_runes = [load_image( "rune/rune_1.png"),
                           load_image(f"rune/rune_2_{lang}.png"),
                           load_image( "rune/rune_3.png"),]
+        # Pre-compute rune part masks
+        self.img_rune_masks = [get_mask(r, (0, 255, 0)) for r in self.img_runes]
+
         self.img_rune_enable = load_image(f"rune/rune_enable_{lang}.png",
                                           cv2.IMREAD_GRAYSCALE)
+        # Pre-allocated HSV buffer for arrow_hsv_binarized
+        self._buf_hsv = None
         # Coordinate
         self.loc_rune = None # rune location on game screen
 
@@ -118,10 +133,11 @@ class RuneSolver:
                 best_score = float('inf')
                 best_direction = ""
                 for direction, arrow_list in self.img_arrows.items():
-                    for img_arrow in arrow_list:
+                    arrow_masks = self.img_arrow_masks[direction]
+                    for img_arrow, mask in zip(arrow_list, arrow_masks):
                         _, score, _ = find_pattern_sqdiff(
                                         img[y:y+size, x:x+size], img_arrow,
-                                        mask=get_mask(img_arrow, (0, 255, 0)))
+                                        mask=mask)
                         if score < best_score:
                             best_score = score
                             best_direction = direction
@@ -244,8 +260,7 @@ class RuneSolver:
 
         # Match each rune part separately
         matches = []
-        for i, img_rune in enumerate(self.img_runes):
-            mask = get_mask(img_rune, (0, 255, 0))
+        for i, (img_rune, mask) in enumerate(zip(self.img_runes, self.img_rune_masks)):
             loc, score, _ = find_pattern_sqdiff(img[y0:y1, x0:x1], img_rune, mask=mask)
             matches.append((i, loc, score, img_rune.shape))
 
@@ -314,6 +329,7 @@ class RuneSolver:
         """
         Convert a BGR image to a binary mask using HSV thresholding.
         Handles hue wraparound (e.g., low_hsv > high_hsv).
+        Uses a pre-allocated HSV buffer to avoid per-call allocation.
 
         Args:
             img (np.ndarray): BGR image
@@ -323,26 +339,29 @@ class RuneSolver:
         Returns:
             np.ndarray: Binary mask (0 or 255)
         """
-        # Convert image to HSV (OpenCV format)
-        img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        h, w = img.shape[:2]
+        # Ensure pre-allocated HSV buffer matches image size
+        if self._buf_hsv is None or self._buf_hsv.shape != (h, w, 3):
+            self._buf_hsv = np.empty((h, w, 3), dtype=np.uint8)
+        cv2.cvtColor(img, cv2.COLOR_BGR2HSV, dst=self._buf_hsv)
 
         # Check if hue range wraps around
         if low_hsv[0] > high_hsv[0]:
             # Wraparound: split into two ranges
             lower1 = to_opencv_hsv([0          , low_hsv[1] , low_hsv[2]])
             upper1 = to_opencv_hsv([high_hsv[0], high_hsv[1], high_hsv[2]])
-            mask1 = cv2.inRange(img_hsv, lower1, upper1)
+            mask1 = cv2.inRange(self._buf_hsv, lower1, upper1)
 
             lower2 = to_opencv_hsv([low_hsv[0] , low_hsv[1] , low_hsv[2]])
             upper2 = to_opencv_hsv([360        , high_hsv[1], high_hsv[2]])
-            mask2 = cv2.inRange(img_hsv, lower2, upper2)
+            mask2 = cv2.inRange(self._buf_hsv, lower2, upper2)
 
             mask = cv2.bitwise_or(mask1, mask2)
         else:
             # Normal range
             lower = to_opencv_hsv(low_hsv)
             upper = to_opencv_hsv(high_hsv)
-            mask = cv2.inRange(img_hsv, lower, upper)
+            mask = cv2.inRange(self._buf_hsv, lower, upper)
 
         return mask
 
@@ -419,11 +438,12 @@ class RuneSolver:
 
         # Check if arrow appear on screen
         best_score = float('inf')
-        for _, arrow_list in self.img_arrows.items():
-            for img_arrow in arrow_list:
+        for direction, arrow_list in self.img_arrows.items():
+            arrow_masks = self.img_arrow_masks[direction]
+            for img_arrow, mask in zip(arrow_list, arrow_masks):
                 _, score, _ = find_pattern_sqdiff(
                                 img[y:y+size, x:x+size], img_arrow,
-                                mask=get_mask(img_arrow, (0, 255, 0)))
+                                mask=mask)
                 if score < best_score:
                     best_score = score
 
