@@ -340,38 +340,59 @@ class ArduinoHIDBackend(InputBackend):
         '''查找Arduino端口'''
         if self._port:
             return self._port
-        
+
         if not self._auto_detect:
             return None
-        
+
         logger.info("[ArduinoHIDBackend] 自动检测Arduino端口...")
-        
-        # 常见的Arduino设备VID/PID
+
+        # 常见的Arduino设备VID/PID（包括各种兼容板）
         arduino_ids = [
+            # 官方 Arduino
             (0x2341, 0x8036),  # Arduino Leonardo
             (0x2341, 0x8037),  # Arduino Micro
+            # SparkFun Pro Micro
             (0x1B4F, 0x9205),  # SparkFun Pro Micro 5V
             (0x1B4F, 0x9206),  # SparkFun Pro Micro 3.3V
-            (0x239A, None),    # Adafruit
+            # Adafruit
+            (0x239A, None),    # Adafruit (通配VID)
+            # Teensy
             (0x16C0, 0x0483),  # Teensy
+            # 常见的 CH340/CH341 (廉价兼容板)
+            (0x1A86, 0x7523),  # CH340
+            (0x1A86, 0x5523),  # CH341
+            # FTDI
+            (0x0403, 0x6001),  # FT232
+            (0x0403, 0x6010),  # FT2232
+            # CP210x
+            (0x10C4, 0xEA60),  # CP210x
         ]
-        
+
         for port_info in self._list_ports.comports():
             vid = port_info.vid
             pid = port_info.pid
-            
+
             for target_vid, target_pid in arduino_ids:
                 if vid == target_vid and (target_pid is None or pid == target_pid):
                     logger.info(f"[ArduinoHIDBackend] 找到设备: {port_info.device} "
-                               f"({port_info.description})")
+                               f"(VID={vid:04X}, PID={pid:04X}, {port_info.description})")
                     return port_info.device
-            
-            # 也检查描述中是否包含Arduino关键字
+
+            # 检查描述中是否包含Arduino或其他关键字
             desc = (port_info.description or '').lower()
-            if 'arduino' in desc or 'leonardo' in desc or 'pro micro' in desc:
-                logger.info(f"[ArduinoHIDBackend] 找到设备: {port_info.device}")
-                return port_info.device
-        
+            # 支持中文和英文描述
+            keywords = [
+                'arduino', 'leonardo', 'pro micro', 'promicro',
+                'ch340', 'ch341', 'usb serial',
+                'teensy', 'ft232', 'cp210', 'maple',
+                'usb转串口', 'serial', 'com port',
+            ]
+            for keyword in keywords:
+                if keyword in desc:
+                    logger.info(f"[ArduinoHIDBackend] 通过关键字找到设备: {port_info.device} ({port_info.description})")
+                    return port_info.device
+
+        logger.info("[ArduinoHIDBackend] 未找到Arduino设备")
         return None
     
     def _connect(self, port: str) -> bool:

@@ -584,6 +584,7 @@ def init_input_backend(cfg: dict) -> InputBackend:
     global _arduino_backend
 
     backend_type = cfg.get('anti_detect', {}).get('input_backend', 'auto')
+    logger.info(f"[InputBackend] init_input_backend: backend_type={backend_type}, _arduino_backend={'已存在' if _arduino_backend else 'None'}")
 
     # 始终尝试初始化 Arduino HID 后端（用于 UI 显示状态）
     # 即使配置了其他后端，Arduino 面板也能显示连接状态
@@ -591,6 +592,7 @@ def init_input_backend(cfg: dict) -> InputBackend:
         try:
             from src.input.ArduinoHIDBackend import create_arduino_hid_backend
             _arduino_backend = create_arduino_hid_backend(cfg)
+            logger.info(f"[InputBackend] Arduino 后端已创建, available={_arduino_backend.is_available() if _arduino_backend else False}")
         except Exception as e:
             logger.debug(f"[InputBackend] 初始化Arduino后端失败: {e}")
             _arduino_backend = None
@@ -602,6 +604,7 @@ def init_input_backend(cfg: dict) -> InputBackend:
             backend = create_arduino_hid_backend(cfg)
             if backend:
                 _arduino_backend = backend
+                logger.info(f"[InputBackend] 使用 Arduino 后端, available={backend.is_available()}")
                 if backend.is_available():
                     global _current_backend
                     _current_backend = backend
@@ -611,5 +614,6 @@ def init_input_backend(cfg: dict) -> InputBackend:
 
     # 返回实际创建的后端（可能是 Arduino HID，也可能是其他）
     if _arduino_backend is not None:
+        logger.info(f"[InputBackend] 返回 _arduino_backend, available={_arduino_backend.is_available()}")
         return _arduino_backend
     return get_input_backend(backend_type)
