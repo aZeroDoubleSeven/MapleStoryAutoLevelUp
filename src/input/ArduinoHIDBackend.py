@@ -376,23 +376,36 @@ class ArduinoHIDBackend(InputBackend):
     
     def _connect(self, port: str) -> bool:
         '''连接到Arduino'''
+        logger.info(f"[ArduinoHIDBackend] 尝试连接端口: {port}")
         self._update_state(ConnectionState.CONNECTING, port=port)
-        
+
         try:
+            # 尝试关闭已存在的连接
+            if self._serial:
+                try:
+                    self._serial.close()
+                    logger.info("[ArduinoHIDBackend] 已关闭旧连接")
+                except:
+                    pass
+
             self._serial = self._serial_module.Serial(
                 port=port,
                 baudrate=self._baud_rate,
                 timeout=self.DEFAULT_TIMEOUT,
                 write_timeout=self.DEFAULT_TIMEOUT
             )
-            
+
+            logger.info(f"[ArduinoHIDBackend] 串口已打开: {port}, 波特率: {self._baud_rate}")
+
             # 等待Arduino重置
+            logger.info("[ArduinoHIDBackend] 等待 Arduino 重置 (2s)...")
             time.sleep(2.0)
-            
+
             # 清空缓冲区
             self._serial.reset_input_buffer()
             self._serial.reset_output_buffer()
-            
+            logger.info("[ArduinoHIDBackend] 缓冲区已清空")
+
             # 检查设备响应
             if self._verify_device():
                 self._port = port
@@ -401,11 +414,12 @@ class ArduinoHIDBackend(InputBackend):
                 logger.info(f"[ArduinoHIDBackend] 连接成功: {port}")
                 return True
             else:
+                logger.warning("[ArduinoHIDBackend] 设备验证失败，尝试关闭端口...")
                 self._serial.close()
                 self._serial = None
                 self._update_state(ConnectionState.ERROR, error="Device verification failed")
                 return False
-                
+
         except Exception as e:
             logger.error(f"[ArduinoHIDBackend] 连接失败: {e}")
             self._update_state(ConnectionState.ERROR, error=str(e))
@@ -703,10 +717,24 @@ class ArduinoHIDBackend(InputBackend):
                 self._serial.close()
             except:
                 pass
-        
-        port = self._find_port()
-        if port:
-            return self._connect(port)
+            self._serial = None
+
+        # 多次尝试重连（Windows 串口可能需要更长时间释放）
+        for attempt in range(3):
+            if attempt > 0:
+                wait_time = 0.5 * (attempt + 1)  # 递增等待: 0.5s, 1.0s, 1.5s
+                logger.info(f"[ArduinoHIDBackend] 等待端口释放 ({wait_time}s), 尝试 {attempt + 1}/3")
+                time.sleep(wait_time)
+
+            port = self._find_port()
+            if port:
+                logger.info(f"[ArduinoHIDBackend] 找到端口 {port}, 尝试连接...")
+                if self._connect(port):
+                    return True
+            else:
+                logger.info(f"[ArduinoHIDBackend] 尝试 {attempt + 1}/3: 未找到设备")
+
+        logger.warning("[ArduinoHIDBackend] 重连失败: 多次尝试未找到或无法连接设备")
         return False
     
     def disconnect(self) -> None:

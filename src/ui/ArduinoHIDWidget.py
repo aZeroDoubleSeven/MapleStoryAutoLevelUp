@@ -31,22 +31,25 @@ from src.utils.logger import logger
 class ConnectionStatusWidget(QWidget):
     '''
     Arduino 连接状态显示组件
-    
+
     显示:
     - 连接状态 (已连接/断开/错误等)
     - 端口信息
     - 设备ID
     - 延迟
     - 错误信息
-    
+
     线程安全:
     --------
     重连/断开操作在后台线程执行，通过信号通知 UI 更新
     '''
-    
+
     # 信号: 后台操作完成后通知 UI
     operation_finished = Signal(str, bool)  # (operation_name, success)
-    
+
+    # 信号: 连接状态变化（供 ArduinoHIDPanel 监听）
+    connection_state_changed = Signal(bool)  # True=已连接, False=未连接
+
     # 状态颜色映射
     STATUS_COLORS = {
         'connected': '#4CAF50',      # 绿色
@@ -55,7 +58,7 @@ class ConnectionStatusWidget(QWidget):
         'reconnecting': '#FF9800',    # 橙色
         'error': '#F44336',           # 红色
     }
-    
+
     # 状态文本映射
     STATUS_TEXT = {
         'connected': '已连接',
@@ -64,19 +67,22 @@ class ConnectionStatusWidget(QWidget):
         'reconnecting': '重连中...',
         'error': '错误',
     }
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
-        
+
         # 定时更新 (3秒间隔，减少不必要的轮询开销)
         self._update_timer = QTimer(self)
         self._update_timer.timeout.connect(self._update_display)
         self._update_timer.start(3000)  # 每3秒更新
-        
+
         # 后端引用
         self._backend = None
-        
+
+        # 记录上次状态，用于检测变化
+        self._last_known_state = None
+
         # 连接信号到槽
         self.operation_finished.connect(self._on_operation_finished)
     
@@ -138,6 +144,7 @@ class ConnectionStatusWidget(QWidget):
     def set_backend(self, backend):
         '''设置后端引用'''
         self._backend = backend
+        self._precheck_label.hide()
         self._update_display()
     
     def set_precheck_mode(self, enabled: bool):
@@ -162,30 +169,45 @@ class ConnectionStatusWidget(QWidget):
             self._latency_label.setText("-")
             self._stats_label.setText("-")
             self._error_label.hide()
+            # 如果之前是连接状态，发送断开信号
+            if self._last_known_state == 'connected':
+                self._last_known_state = 'disconnected'
+                self.connection_state_changed.emit(False)
             return
-        
+
         try:
             info = self._backend.get_connection_info()
-            
+
             # 状态
             state = info.state
             color = self.STATUS_COLORS.get(state, '#9E9E9E')
             text = self.STATUS_TEXT.get(state, state)
             self._status_indicator.setStyleSheet(f"color: {color}; font-size: 16px;")
             self._status_label.setText(text)
-            
+
+            # 如果连接成功，自动隐藏预检测警告
+            if state == 'connected':
+                self.set_precheck_mode(False)
+
+            # 检测连接状态变化
+            if state != self._last_known_state:
+                self._last_known_state = state
+                is_connected = (state == 'connected')
+                self.connection_state_changed.emit(is_connected)
+                logger.info(f"[ConnectionStatusWidget] 连接状态变化: {state}")
+
             # 端口
             self._port_label.setText(info.port or "-")
-            
+
             # 设备
             self._device_label.setText(info.device_id or "-")
-            
+
             # 延迟
             if info.latency_ms > 0:
                 self._latency_label.setText(f"{info.latency_ms:.1f} ms")
             else:
                 self._latency_label.setText("-")
-            
+
             # 统计
             hid_logger = self._backend.get_hid_logger()
             self._stats_label.setText(
@@ -193,14 +215,14 @@ class ConnectionStatusWidget(QWidget):
                 f"错误: {hid_logger.total_errors}, "
                 f"平均延迟: {hid_logger.get_average_latency():.1f}ms"
             )
-            
+
             # 错误
             if info.error_message:
                 self._error_label.setText(info.error_message)
                 self._error_label.show()
             else:
                 self._error_label.hide()
-                
+
         except Exception as e:
             logger.warning(f"[ConnectionStatusWidget] Update failed: {e}")
     
@@ -262,10 +284,14 @@ class ConnectionStatusWidget(QWidget):
         self._reconnect_btn.setText("重新连接")
         self._disconnect_btn.setEnabled(True)
         self._disconnect_btn.setText("断开连接")
-        
+
         # 立即更新显示
         self._update_display()
-        
+
+        # 如果重连成功但还没隐藏预检测警告（通过 _update_display 中的 _check_connection_state 触发）
+        if success and operation == "reconnect":
+            logger.info(f"[ConnectionStatusWidget] {operation} 成功")
+
         if not success:
             logger.warning(f"[ConnectionStatusWidget] {operation} operation failed")
 
@@ -589,10 +615,14 @@ class ArduinoHIDPanel(QGroupBox):
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        
+
         # 状态部分
         self._status_widget = ConnectionStatusWidget()
         self._status_widget.set_precheck_mode(self._precheck_enabled)
+
+        # 连接状态变化信号
+        self._status_widget.connection_state_changed.connect(self._check_connection_state)
+
         layout.addWidget(self._status_widget)
         
         # 分隔线
@@ -649,9 +679,10 @@ class ArduinoHIDPanel(QGroupBox):
         except:
             return False
     
-    def _check_connection_state(self):
+    def _check_connection_state(self, connected: bool = None):
         '''检查并通知连接状态变化'''
-        connected = self.is_connected()
+        if connected is None:
+            connected = self.is_connected()
         if connected != self._last_connection_state:
             self._last_connection_state = connected
             self.connection_changed.emit(connected)

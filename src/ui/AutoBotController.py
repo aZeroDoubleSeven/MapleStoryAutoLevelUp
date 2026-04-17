@@ -67,6 +67,7 @@ class AutoBotController(QObject):
         '''
         Only called after UI init
         '''
+        self.ui = ui  # 保存 UI 引用（必须在其他操作之前）
         self.debug_image_signal.connect(ui.update_debug_canvas)
         self.route_map_viz_signal.connect(ui.update_route_map_canvas)
         # Register Function Key handler
@@ -74,6 +75,9 @@ class AutoBotController(QObject):
         self.kb_listener.register_func_key_handler('f2', ui.button_screenshot.click)
         self.kb_listener.register_func_key_handler('f3', ui.button_record.click)
         self.kb_listener.register_func_key_handler('f12', lambda: ui.request_close.emit())
+
+        # UI 初始化完成后，更新 Arduino 状态显示
+        ui._update_input_backend_status_display()
 
     def start_bot(self, cfg_path):
         '''

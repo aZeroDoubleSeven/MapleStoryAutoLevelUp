@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
         Setup Arduino HID tab for connection status and logs
         '''
         from src.ui.ArduinoHIDWidget import ArduinoHIDPanel
-        from src.input.InputBackend import get_arduino_backend
+        from src.input.InputBackend import init_input_backend, get_arduino_backend
 
         tab_arduino_hid = QWidget()
         layout = QVBoxLayout()
@@ -239,13 +239,17 @@ class MainWindow(QMainWindow):
         self.arduino_hid_panel = ArduinoHIDPanel("Arduino HID Controller")
         layout.addWidget(self.arduino_hid_panel)
 
-        # Try to get Arduino backend and set it
+        # 连接 Arduino 连接状态变化信号到 UI 更新
+        self.arduino_hid_panel.connection_changed.connect(self._on_arduino_connection_changed)
+
+        # 主动初始化 Arduino HID 后端
+        cfg_for_init = self.cfg if hasattr(self, 'cfg') else {}
+        init_input_backend(cfg_for_init)
+
+        # 设置后端
         arduino_backend = get_arduino_backend()
         if arduino_backend:
             self.arduino_hid_panel.set_backend(arduino_backend)
-            logger.info("[UI] Arduino HID panel connected to backend")
-        else:
-            logger.info("[UI] Arduino HID backend not available")
 
         return tab_arduino_hid
 
@@ -260,6 +264,8 @@ class MainWindow(QMainWindow):
             if arduino_backend:
                 self.arduino_hid_panel.set_backend(arduino_backend)
                 logger.info("[UI] Arduino HID panel backend refreshed")
+                # 更新 Main tab 的状态提示
+                self._update_input_backend_status_display()
             else:
                 logger.info("[UI] Arduino HID backend still not available")
 
@@ -272,6 +278,41 @@ class MainWindow(QMainWindow):
         if arduino_backend and hasattr(self, 'arduino_hid_panel'):
             self.arduino_hid_panel.set_backend(arduino_backend)
             logger.info("[UI] Arduino HID panel backend updated")
+
+    def _on_arduino_connection_changed(self, connected: bool):
+        '''
+        Arduino 连接状态变化时的处理
+        更新 Main tab 的输入后端状态显示
+        '''
+        self._update_input_backend_status_display()
+
+    def _update_input_backend_status_display(self):
+        '''
+        更新输入后端状态显示（Main tab）
+        根据当前 Arduino 连接状态和选择的输入后端类型来更新显示
+        '''
+        if not hasattr(self, 'input_backend_status_label'):
+            return
+
+        backend_type = self.cfg.get('anti_detect', {}).get('input_backend', 'auto')
+
+        # 检查 Arduino 是否连接
+        arduino_connected = False
+        if self.controller:
+            arduino_connected = self.controller.is_arduino_connected()
+
+        if backend_type == 'arduino_hid':
+            if arduino_connected:
+                self.input_backend_status_label.setText("✅ Arduino 已连接")
+                self.input_backend_status_label.setStyleSheet("color: green;")
+                self.load_config_error_label.setVisible(False)
+            else:
+                self.input_backend_status_label.setText("⚠️ 未连接 Arduino，请先在 Arduino HID 标签页连接设备")
+                self.input_backend_status_label.setStyleSheet("color: orange;")
+        else:
+            self.input_backend_status_label.setText(f"使用 {backend_type} 后端")
+            self.input_backend_status_label.setStyleSheet("color: gray;")
+            self.load_config_error_label.setVisible(False)
 
     def save_ui_state(self):
         path = os.path.join(os.path.expanduser("~"), ".maplebot_ui_state.json")
@@ -858,6 +899,8 @@ class MainWindow(QMainWindow):
         elif tab_name == "Main":
             self.controller.disable_bot_viz()
             self.apply_config_to_ui()
+            # 更新 Arduino 输入后端状态显示
+            self._update_input_backend_status_display()
 
         elif tab_name == "Advanced Settings":
             self.controller.disable_bot_viz()
@@ -1000,20 +1043,8 @@ class MainWindow(QMainWindow):
         '''当输入后端改变时的处理'''
         self.cfg["anti_detect"]["input_backend"] = backend_type
 
-        # 清除之前的错误提示
-        self.load_config_error_label.setVisible(False)
-
-        # 如果选择了 arduino_hid，检查连接状态
-        if backend_type == "arduino_hid":
-            if self.controller and self.controller.is_arduino_connected():
-                self.input_backend_status_label.setText("✅ Arduino 已连接")
-                self.input_backend_status_label.setStyleSheet("color: green;")
-            else:
-                self.input_backend_status_label.setText("⚠️ 未连接 Arduino，请先在 Arduino HID 标签页连接设备")
-                self.input_backend_status_label.setStyleSheet("color: orange;")
-        else:
-            self.input_backend_status_label.setText(f"使用 {backend_type} 后端")
-            self.input_backend_status_label.setStyleSheet("color: gray;")
+        # 更新输入后端状态显示
+        self._update_input_backend_status_display()
 
         logger.info(f"[UI] 输入后端切换为: {backend_type}")
 

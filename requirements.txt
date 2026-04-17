@@ -2,6 +2,7 @@ opencv-python
 numpy
 pyautogui
 pynput
+pyserial
 requests
 pyyaml
 PySide6
