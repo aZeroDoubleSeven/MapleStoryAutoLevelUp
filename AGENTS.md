@@ -105,12 +105,35 @@
 
 | 状态 | 类 | 主要行为 |
 |------|-----|----------|
-| `hunting` | `HuntingState` | 根据路线图移动 + 怪物检测攻击 |
+| `hunting` | `HuntingState` | 根据路线图移动 + 怪物检测攻击 + 攻击看门狗 |
 | `patrol` | `PatrolState` | 简单左右巡逻 + 定时攻击 |
 | `finding_rune` | `FindingRuneState` | 寻找符文位置，继续狩猎 |
 | `near_rune` | `NearRuneState` | 接近符文，尝试触发 |
 | `solving_rune` | `SolvingRuneState` | 解决方向键小游戏 |
 | `aux` | `AuxiliaryState` | 空闲/辅助模式 |
+
+### RuneSolver 符文解谜流程
+
+```python
+def solve_rune(self, img, img_debug):
+    # 1. HSV 二值化找到高亮箭头
+    img_bin = self.arrow_hsv_binarized(...)
+
+    # 2. 对每个箭头位置进行圆形检测
+    circles = cv2.HoughCircles(...)
+
+    # 3. 模板匹配确定箭头方向
+    for direction, arrow_list in self.img_arrows:
+        score = find_pattern_sqdiff(...)
+
+    # 4. 按下对应方向键
+    press_key(best_direction, 0.5)
+```
+
+关键检测方法：
+- `is_rune_enable()`: 检测"符文已激活"消息
+- `is_rune_warning()`: 检测"请清除符文"警告
+- `is_in_rune_game()`: 检测是否进入箭头小游戏
 
 ### State 基类方法
 
@@ -137,26 +160,57 @@ class State:
 
 ## 关键数据流
 
-### 每帧处理流程 (MapleStoryAutoBot.run)
+### 每帧处理流程 (MapleStoryAutoBot.run_once)
 
 ```python
 while not is_terminated:
     # 1. 获取游戏画面
-    img_frame = capture.get_frame()
+    img_frame = self.get_img_frame()
 
-    # 2. 检测小地图和玩家位置
+    # 2. 图像预处理 + 小地图检测
     minimap_result = get_minimap_loc_size(img_frame)
-    loc_player = get_player_location_on_minimap(img_minimap)
 
-    # 3. 状态机执行
-    fsm.check_transitions()  # 检查状态转换
-    current_state.on_frame() # 执行当前状态逻辑
+    # 3. 玩家位置检测（两种模式）
+    # 模式1: 名字标签模式（已弃用）
+    loc_player = self.get_player_location_by_nametag()
+    # 模式2: 队伍红条模式（推荐）
+    loc_player = self.get_player_location_by_party_hp()
+    # 小地图玩家黄点
+    loc_player_minimap = get_player_location_on_minimap(img_minimap)
 
-    # 4. 状态逻辑产生命令
+    # 4. 全局地图定位
+    loc_player_global = self.get_player_location_on_global_map()
+
+    # 5. 状态机执行
+    self.fsm.do_state_stuff()
+
+    # 6. 状态逻辑产生命令
     # cmd = "{左右} {上下} {动作}"  例: "left none attack"
 
-    # 5. 键盘控制器执行命令
-    kb.set_command(cmd)
+    # 7. 键盘控制器执行命令
+    self.kb.set_command(cmd)
+```
+
+### HealthMonitor 独立线程
+
+`HealthMonitor` 在独立线程中运行，不阻塞主循环：
+
+```python
+def _monitor_loop(self):
+    while not self.is_terminated:
+        # 1. 提取 HP/MP/EXP 条百分比
+        hp_percent, mp_percent, exp_percent = self.get_hp_mp_exp_percent()
+
+        # 2. HP 低于阈值时自动喝药
+        if hp_percent <= hp_threshold:
+            self._heal()
+
+        # 3. MP 低于阈值时自动补魔
+        if mp_percent <= mp_threshold:
+            self._add_mp()
+
+        # 4. 冷却时间随机化（反检测）
+        cooldown = human.randomize_cooldown(base_cooldown)
 ```
 
 ### 命令格式
@@ -327,7 +381,7 @@ MapleStoryAutoLevelUp/
 ├── src/
 │   ├── main.py                           # UI 启动入口
 │   ├── engine/
-│   │   ├── MapleStoryAutoLevelUp.py      # 核心机器人 (~1954行)
+│   │   ├── MapleStoryAutoLevelUp.py      # 核心机器人 (~1983行)
 │   │   ├── FiniteStateMachine.py        # 状态机框架
 │   │   ├── HealthMonitor.py              # HP/MP 监控
 │   │   ├── RuneSolver.py                 # 符文解谜
@@ -348,11 +402,11 @@ MapleStoryAutoLevelUp/
 │   │   ├── GameWindowCapturor.py          # Windows 截图 (windows_capture)
 │   │   └── GameWindowCapturorForMac.py    # macOS 截图
 │   ├── ui/
-│   │   ├── ui.py                         # 主窗口 (~1197行)
+│   │   ├── ui.py                         # 主窗口 (~1297行)
 │   │   ├── AutoBotController.py           # UI-Engine 桥接
 │   │   └── ArduinoHIDWidget.py             # Arduino UI 组件
 │   └── utils/
-│       ├── common.py                      # 图像处理/配置管理 (~848行)
+│       ├── common.py                      # 图像处理/配置管理 (~874行)
 │       ├── logger.py                      # 日志系统
 │       ├── anti_detect.py                 # 反检测/人性化 (~377行)
 │       ├── global_var.py                  # 全局常量
@@ -387,7 +441,8 @@ MapleStoryAutoLevelUp/
 │   ├── ui.md                              # UI 模块详解
 │   ├── utils.md                           # 工具模块详解
 │   ├── ARDUINO_HID_GUIDE.md              # Arduino HID 使用指南
-│   └── 反检测功能说明.md                   # 反检测功能说明
+│   ├── 反检测功能说明.md                   # 反检测功能说明
+│   └── 新地图配置指南.md                   # 新地图配置详细步骤
 ├── minimaps/                              # 地图路线图资源
 ├── legacy/                                # 遗留代码
 │   └── mapleStoryAutoLevelUp_legacy.py
@@ -595,7 +650,52 @@ with self.lock:
 
 ## 关键常量和配置
 
-### 窗口尺寸
+### 玩家位置检测
+
+两种模式（配置 `nametag.enable`）：
+
+1. **名字标签模式**（已弃用）：
+   - 模板匹配找到名字标签
+   - 根据偏移量计算玩家中心
+
+2. **队伍红条模式**（推荐）：
+   - HSV 红色检测找到队伍 HP 条
+   - 根据偏移量计算玩家中心
+   - 依赖队伍创建（显示红色队伍条）
+
+```python
+def get_player_location_by_party_hp(self, img_frame):
+    # HSV 红色检测队伍 HP 条
+    hsv = cv2.cvtColor(img_frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, lower_red, upper_red)
+
+    # 找到连通区域，取中间位置
+    # 根据偏移量计算玩家中心
+    return (player_x, player_y)
+```
+
+### 怪物检测模式
+
+支持多种模式（配置 `monster_detect.mode`）：
+
+| 模式 | 说明 | 速度 | 准确性 |
+|------|------|------|--------|
+| `color` | 颜色模板匹配 | 最慢 | 最准确 |
+| `grayscale` | 灰度模板匹配 | 中等 | 中等 |
+| `contour_only` | 轮廓检测 | 快 | 较好 |
+| `template_free` | 无模板自由检测 | 最快 | 最不准确 |
+
+```python
+def detect_monsters(self, img_frame, loc_player):
+    if self.cfg["monster_detect"]["mode"] == "contour_only":
+        # 轮廓检测：边缘检测 + 连通区域 + 形状过滤
+        edges = cv2.Canny(img_gray, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    elif self.cfg["monster_detect"]["mode"] == "color":
+        # 颜色模板匹配
+        for template in self.mob_templates:
+            result = find_pattern_sqdiff(img_frame, template)
+```
 ```python
 WINDOW_WORKING_SIZE = (1296, 700)  # (宽度, 高度)
 ```
@@ -679,10 +779,13 @@ profiler.report()  # 打印统计
 - `Image Preprocessing` - 图像预处理
 - `Get Minimap Location and Size` - 小地图检测
 - `Player Location Detection` - 玩家位置检测
+- `Global Map Location Detection` - 全局地图定位
 - `Change Channel` - 换频道
 - `Attack WatchDog` - 攻击看门狗
+- `Monster Detection` - 怪物检测
 - `State per-frame behavior` - 状态行为
 - `Debug Window Show` - 调试窗口显示
+- `Keyboard Command Execution` - 键盘命令执行
 
 ### 5. 像素颜色获取工具
 ```bash
@@ -810,3 +913,4 @@ anti_detect:
 - `docs/utils.md` - 工具模块详解
 - `docs/ARDUINO_HID_GUIDE.md` - Arduino HID 使用指南
 - `docs/反检测功能说明.md` - 反检测功能说明
+- `docs/新地图配置指南.md` - 新地图配置详细步骤
