@@ -258,10 +258,16 @@ class HealthMonitor:
 
     def limit_fps(self):
         '''
-        Limit FPS
+        Limit FPS with human-like timing variance
+
+        Uses log-normal distribution for frame intervals to simulate
+        natural human-perceived timing variations.
         '''
-        # If the loop finished early, sleep to maintain target FPS
-        target_duration = 1.0 / self.fps_limit  # seconds per frame
+        human = get_human_behavior()
+
+        # Get human-like frame interval
+        target_duration = human.get_frame_interval(self.fps_limit)
+
         frame_duration = time.time() - self.t_last_run
         if frame_duration < target_duration:
             time.sleep(target_duration - frame_duration)
@@ -269,4 +275,3 @@ class HealthMonitor:
         # Update FPS
         self.fps = round(1.0 / (time.time() - self.t_last_run))
         self.t_last_run = time.time()
-        # logger.info(f"FPS = {self.fps}")

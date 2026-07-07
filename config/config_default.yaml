@@ -384,9 +384,17 @@ anti_detect:
   
   # Potion timing variance
   potion_timing_variance: 0.25      # 📊 Potion cooldown variance (±25%)
-  
+
+  # 人类反应时间设置
+  reaction_time_min: 150             # ⏱️ 最小反应时间（毫秒）- 检测到目标到做出反应
+  reaction_time_max: 400            # ⏱️ 最大反应时间（毫秒）- 复杂决策需要更长时间
+
+  # 帧间隔随机化
+  frame_interval_variance: 0.3      # 📊 帧间隔方差（±30%），模拟人类不稳定帧率
+
   # Feature toggles
   enable_random_delays: True        # ✅ Enable random delays between actions
   enable_micro_pauses: True         # ✅ Enable occasional micro-pauses
   enable_idle_behavior: True        # ✅ Enable occasional idle breaks
   enable_typing_variance: True      # ✅ Enable key press duration variance
+  enable_reaction_time: True        # ✅ 启用人类反应时间延迟（关键！模拟看到-反应）

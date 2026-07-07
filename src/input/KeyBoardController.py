@@ -217,31 +217,42 @@ class KeyBoardController():
 
     def limit_fps(self):
         '''
-        Limit FPS with slight randomization
+        Limit FPS with human-like timing variance
+
+        Uses log-normal distribution for frame intervals to simulate
+        natural human-perceived timing variations.
         '''
-        # If the loop finished early, sleep to maintain target FPS
-        base_target = 1.0 / self.fps_limit
-        # Add slight variance to FPS timing (±5%)
-        target_duration = base_target * random.uniform(0.95, 1.05)
+        human = get_human_behavior()
+
+        # Get human-like frame interval
+        target_duration = human.get_frame_interval(self.fps_limit)
+
         frame_duration = time.time() - self.t_last_run
         if frame_duration < target_duration:
             time.sleep(target_duration - frame_duration)
 
-        # Update FPS
+        # Update FPS (actual FPS may vary due to randomization)
         self.fps = round(1.0 / (time.time() - self.t_last_run))
         self.t_last_run = time.time()
-        # logger.info(f"FPS = {self.fps}")
 
     def run(self):
         '''
         run
         '''
         human = get_human_behavior()
-        
+
         while not self.is_terminated:
             # Check if game window is active
             if not self.is_enable or not self.is_game_window_active():
                 self.limit_fps()
+                continue
+
+            # Occasional burst pause (after consecutive actions) to simulate thinking
+            should_pause, pause_duration = human.should_burst_pause()
+            if should_pause:
+                logger.debug(f"[KeyBoardController] Burst pause ({pause_duration:.2f}s)")
+                self.release_all_key()
+                time.sleep(pause_duration)
                 continue
 
             # Occasional idle behavior to appear more human-like

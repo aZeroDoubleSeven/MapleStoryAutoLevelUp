@@ -29,63 +29,78 @@ import math
 class HumanBehavior:
     '''
     人类行为模拟器
-    
+
     提供各种随机化方法，使机器人行为更像真人操作
     '''
-    
+
     def __init__(self, cfg=None):
         '''
         初始化人类行为模拟器
-        
+
         参数：
             cfg: 配置字典（可选）
         '''
         self.cfg = cfg or {}
-        
+
         # 默认反检测设置
         self.settings = {
             # 按键时长随机化
             'key_duration_base': 0.05,       # 基础按键时长（秒）
             'key_duration_variance': 0.03,   # 时长变化范围（±30毫秒）
-            
+
             # 动作延迟随机化
             'action_delay_min': 0.02,        # 最小动作延迟（秒）
             'action_delay_max': 0.08,        # 最大动作延迟（秒）
-            
+
             # 攻击冷却变化（百分比）
             'attack_cooldown_variance': 0.15,  # ±15%
-            
+
+            # 人类反应时间（毫秒）
+            'reaction_time_min': 150,         # 最小反应时间
+            'reaction_time_max': 400,         # 最大反应时间
+
             # 微停顿设置
             'micro_pause_probability': 0.05,   # 5% 概率触发微停顿
             'micro_pause_duration_min': 0.1,   # 最短微停顿时间
             'micro_pause_duration_max': 0.3,   # 最长微停顿时间
-            
+
             # 闲置行为设置
             'idle_probability': 0.01,          # 1% 概率触发闲置
             'idle_duration_min': 0.5,          # 最短闲置时间
             'idle_duration_max': 2.0,          # 最长闲置时间
-            
+
             # Buff技能时间变化
             'buff_timing_variance': 0.2,       # ±20%
-            
+
             # 喝药时间变化
             'potion_timing_variance': 0.25,    # ±25%
-            
+
+            # 帧间隔随机化
+            'frame_interval_variance': 0.3,    # ±30% 帧间隔方差
+
             # 功能开关
             'enable_random_delays': True,      # 启用随机延迟
             'enable_micro_pauses': True,       # 启用微停顿
             'enable_idle_behavior': True,      # 启用闲置行为
             'enable_typing_variance': True,    # 启用按键时长变化
+            'enable_reaction_time': True,     # 启用人类反应时间延迟
         }
-        
+
         # 从配置文件覆盖默认设置
         if 'anti_detect' in self.cfg:
             self.settings.update(self.cfg['anti_detect'])
-        
+
         # 状态追踪（用于模拟自然行为模式）
         self._last_action_time = time.time()
         self._action_count = 0
         self._fatigue_level = 0.0  # 疲劳度（0.0 ~ 1.0）
+
+        # 新增：连续操作计数器（用于突发暂停）
+        self._consecutive_actions = 0
+
+        # 新增：攻击目标跟踪（用于模拟人类反应时间）
+        self._attack_target_detected_time = {}  # target_id -> detection_time
+        self._last_attack_time = 0
         
     def get_key_duration(self, base_duration=None):
         '''
@@ -287,61 +302,258 @@ class HumanBehavior:
             y += perp_y * curve_amount * random.uniform(0.5, 1.5)
             
             points.append((int(x), int(y)))
-            
+
         return points
+
+    def get_reaction_delay(self, action_type='attack'):
+        '''
+        获取人类反应时间延迟
+
+        模拟真实人类的视觉反应时间。
+        人类不会立即对游戏事件做出反应，总会有一个"看到-理解-决策-执行"的过程。
+
+        参数：
+            action_type: 动作类型
+                - 'attack': 攻击怪物（150-350ms）
+                - 'heal': 喝药补血（200-400ms，危机时更快）
+                - 'move': 移动反应（100-250ms）
+                - 'skill': 技能释放（200-500ms）
+
+        返回：
+            float: 反应延迟时间（秒）
+        '''
+        if not self.settings.get('enable_reaction_time', True):
+            return 0
+
+        # 不同动作有不同的反应时间范围
+        reaction_ranges = {
+            'move': (100, 250),   # 移动反应最快
+            'attack': (150, 350), # 攻击需要确认目标
+            'heal': (150, 400),  # 喝药有危机响应
+            'skill': (200, 500),  # 技能需要决策
+        }
+
+        min_ms, max_ms = reaction_ranges.get(action_type, (150, 400))
+
+        # 疲劳会增加反应时间
+        fatigue_factor = 1.0 + self._fatigue_level * 0.3
+
+        # 危机状态（HP 低）会加快反应
+        # 这个需要在调用时传入额外参数，暂时用固定范围
+
+        # 使用 Gamma 分布模拟真实反应时间
+        mean = (min_ms + max_ms) / 2
+        std = (max_ms - min_ms) / 4
+        shape = (mean / std) ** 2
+        scale = std ** 2 / mean
+
+        reaction_ms = random.gammavariate(max(0.1, shape), scale) * fatigue_factor
+        reaction_ms = max(min_ms, min(max_ms, reaction_ms))
+
+        return reaction_ms / 1000.0
+
+    def should_burst_pause(self):
+        '''
+        判断是否应该进行突发暂停
+
+        人类在连续快速操作后可能会短暂停顿（像在思考下一步）
+
+        返回：
+            tuple: (是否暂停, 暂停时长秒)
+        '''
+        # 基础概率 2%，每增加 10 次操作增加 1%
+        base_prob = 0.02
+        burst_prob = min(0.15, base_prob + self._consecutive_actions * 0.001)
+
+        if random.random() < burst_prob:
+            # 暂停时长：100-500ms，使用 Beta 分布偏向短暂停
+            duration = random.betavariate(2, 5) * 0.4 + 0.1
+            self._consecutive_actions = 0
+            return True, duration
+
+        return False, 0
+
+    def record_action(self):
+        '''
+        记录一次动作完成
+
+        更新连续动作计数器
+        '''
+        self._consecutive_actions += 1
+        self._action_count += 1
+        self._last_action_time = time.time()
+
+    def get_frame_interval(self, base_fps=30):
+        '''
+        获取人类风格的帧间隔时间
+
+        人类不会有完美的固定帧率，帧间隔会有自然抖动
+
+        参数：
+            base_fps: 基础帧率
+
+        返回：
+            float: 帧间隔（秒）
+        '''
+        variance = self.settings.get('frame_interval_variance', 0.3)
+        base_interval = 1.0 / base_fps
+        # 使用对数正态分布，产生更自然的帧间隔
+        sigma = variance / 2
+        mu = math.log(base_interval) - sigma ** 2 / 2
+
+        interval = random.lognormvariate(mu, sigma)
+        # 限制范围：最小 8ms（约120fps），最大 100ms（约10fps）
+        return max(0.008, min(0.1, interval))
 
 
 class TimingRandomizer:
-    '''
-    时间随机化工具类
-    
-    提供各种时间相关的随机化方法
-    '''
-    
-    @staticmethod
     def jitter(value, variance_percent=0.15):
         '''
         为数值添加随机抖动
-        
+
         参数：
             value: 基础值
             variance_percent: 变化百分比（0.15 = 15%）
-            
+
         返回：
             float: 抖动后的值
         '''
         variance = value * variance_percent
         return value + random.uniform(-variance, variance)
-    
+
     @staticmethod
     def sleep_with_jitter(base_duration, variance_percent=0.2):
         '''
         带抖动的睡眠
-        
+
         参数：
             base_duration: 基础睡眠时间（秒）
             variance_percent: 变化百分比
         '''
         duration = TimingRandomizer.jitter(base_duration, variance_percent)
         time.sleep(max(0.01, duration))
-    
+
     @staticmethod
     def get_random_interval(min_val, max_val):
         '''
         获取随机间隔（偏向中间值）
-        
+
         使用 Beta 分布，产生更自然的随机分布
-        
+
         参数：
             min_val: 最小值
             max_val: 最大值
-            
+
         返回：
             float: 随机值
         '''
         # Beta(2,2) 分布呈钟形曲线
         beta_value = random.betavariate(2, 2)
         return min_val + (max_val - min_val) * beta_value
+
+    @staticmethod
+    def get_human_reaction_time(min_ms=150, max_ms=400):
+        '''
+        获取人类反应时间
+
+        模拟真实人类的视觉反应时间：
+        - 简单反应：150-250ms
+        - 复杂决策：250-400ms
+
+        参数：
+            min_ms: 最小反应时间（毫秒）
+            max_ms: 最大反应时间（毫秒）
+
+        返回：
+            float: 反应时间（秒）
+        '''
+        # 使用 Gamma 分布模拟真实反应时间分布
+        # Gamma 分布能更好地模拟人类反应时间的偏态分布
+        import math
+        mean = (min_ms + max_ms) / 2
+        std = (max_ms - min_ms) / 4  # 约 2 sigma 覆盖范围
+
+        # Gamma 参数计算
+        shape = (mean / std) ** 2
+        scale = std ** 2 / mean
+
+        # 限制范围
+        reaction_ms = random.gammavariate(max(0.1, shape), scale)
+        reaction_ms = max(min_ms, min(max_ms, reaction_ms))
+
+        return reaction_ms / 1000.0  # 转换为秒
+
+    @staticmethod
+    def get_human_frame_interval(base_fps=30, variance_percent=0.3):
+        '''
+        获取人类风格的帧间隔时间
+
+        人类不会有完美的固定帧率，帧间隔会有自然抖动
+
+        参数：
+            base_fps: 基础帧率
+            variance_percent: 方差百分比（0.3 = ±30%）
+
+        返回：
+            float: 帧间隔（秒）
+        '''
+        base_interval = 1.0 / base_fps
+        # 使用对数正态分布，产生更自然的帧间隔
+        # 对数正态分布总是产生正值，且有自然的偏态
+        import math
+        sigma = variance_percent / 2
+        mu = math.log(base_interval) - sigma ** 2 / 2
+
+        interval = random.lognormvariate(mu, sigma)
+        # 限制范围：最小 8ms（约120fps），最大 100ms（约10fps）
+        return max(0.008, min(0.1, interval))
+
+    @staticmethod
+    def get_human_key_interval(min_ms=30, max_ms=150):
+        '''
+        获取人类按键间隔时间
+
+        模拟人类连续按键之间的时间间隔
+
+        参数：
+            min_ms: 最小间隔（毫秒）
+            max_ms: 最大间隔（毫秒）
+
+        返回：
+            float: 间隔时间（秒）
+        '''
+        # 人类按键间隔使用指数分布（更多短间隔，偶尔长间隔）
+        import math
+        mean_ms = (min_ms + max_ms) / 2
+        scale = mean_ms - min_ms
+
+        interval_ms = random.expovariate(1.0 / scale) + min_ms
+        return min(max_ms, interval_ms) / 1000.0
+
+    @staticmethod
+    def get_burst_pause_probability(burst_count):
+        '''
+        获取突发暂停概率
+
+        人类在连续操作后可能会短暂停顿（像在思考）
+        连续操作越多，暂停概率越高
+
+        参数：
+            burst_count: 连续操作次数
+
+        返回：
+            tuple: (是否暂停, 暂停时长秒)
+        '''
+        # 基础概率 2%，每增加 10 次操作增加 1%
+        base_prob = 0.02
+        burst_prob = min(0.15, base_prob + burst_count * 0.001)
+
+        if random.random() < burst_prob:
+            # 暂停时长：100-500ms，使用 Beta 分布偏向短暂停
+            duration = random.betavariate(2, 5) * 0.4 + 0.1
+            return True, duration
+
+        return False, 0
 
 
 # ============================================================

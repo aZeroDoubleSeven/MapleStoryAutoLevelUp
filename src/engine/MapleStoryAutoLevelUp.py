@@ -105,6 +105,7 @@ class MapleStoryAutoBot:
         self.t_watch_dog = time.time() # Last movement timer
         self.t_last_teleport = time.time() # Last teleport timer
         self.t_last_attack = time.time() # Last attack timer for cooldown
+        self._monsters_last_detected_time = None  # For human reaction time simulation
         self.t_last_minimap_update = time.time()
         self.t_to_change_channel = time.time()
         # Images
@@ -285,6 +286,7 @@ class MapleStoryAutoBot:
         self.t_watch_dog = time.time()
         self.t_last_teleport = time.time()
         self.t_last_attack = time.time()
+        self._monsters_last_detected_time = None
         self.t_last_minimap_update = time.time()
         self.t_to_change_channel = time.time()
 
@@ -1221,8 +1223,9 @@ class MapleStoryAutoBot:
         # open party window
         press_key(self.cfg["key"]["party"])
 
-        # Wait party window to show up
-        time.sleep(0.5)
+        # Wait party window to show up with human-like reaction time
+        human = get_human_behavior()
+        time.sleep(human.get_reaction_delay('skill'))
 
         # Update image frame
         self.img_frame = self.get_img_frame()
@@ -1255,16 +1258,17 @@ class MapleStoryAutoBot:
 
         window_title = self.capture.window_title
         ui_coords = self.cfg["ui_coords"]
-        
+        human = get_human_behavior()
+
         # Use randomized delays between UI interactions
         click_in_game_window(window_title, ui_coords["menu"])
-        time.sleep(random.uniform(0.8, 1.2))
+        time.sleep(human.get_reaction_delay('skill'))
         click_in_game_window(window_title, ui_coords["channel"])
-        time.sleep(random.uniform(0.8, 1.3))
+        time.sleep(human.get_reaction_delay('skill'))
         click_in_game_window(window_title, ui_coords["random_channel"])
-        time.sleep(random.uniform(0.7, 1.1))
+        time.sleep(human.get_reaction_delay('skill'))
         click_in_game_window(window_title, ui_coords["random_channel_confirm"])
-        time.sleep(random.uniform(0.9, 1.2))
+        time.sleep(human.get_reaction_delay('skill'))
 
         loc_login_button = None
         while loc_login_button is None and not self.is_terminated:
@@ -1279,18 +1283,19 @@ class MapleStoryAutoBot:
                     resize_window(window_title, width=1296, height=759)
                 logger.info("Retrying login button detection...")
 
-            time.sleep(3)
+            time.sleep(human.get_reaction_delay('move'))
         logger.info(f"login_button button found: {loc_login_button}")
 
-        time.sleep(3)  # wait the screen to be brighter
+        # wait the screen to be brighter - human reading time
+        time.sleep(human.get_reaction_delay('move'))
 
         # Click login button
         click_in_game_window(window_title, loc_login_button)
-        time.sleep(2)
+        time.sleep(human.get_reaction_delay('skill'))
 
         # Click "Select Character"
         click_in_game_window(window_title, ui_coords["select_character"])
-        time.sleep(5)
+        time.sleep(human.get_reaction_delay('move'))
 
         self.kb.enable()
         self.kb.set_command("none none none")
@@ -1517,22 +1522,42 @@ class MapleStoryAutoBot:
             base_cooldown = self.cfg["directional_attack"]["cooldown"]
         else:
             raise RuntimeError(f"Unsupported attack mode: {self.cfg['bot']['attack']}")
-        
+
         # Apply randomization to cooldown to avoid detection
         human = get_human_behavior()
         cooldown = human.randomize_cooldown(base_cooldown, 'attack')
-        
+
         x0 = max(0                      , self.loc_player[0] - dx)
         x1 = min(self.img_frame.shape[1], self.loc_player[0] + dx)
         y0 = max(0                      , self.loc_player[1] - dy)
         y1 = min(self.img_frame.shape[0], self.loc_player[1] + dy)
 
         # Get monsters in the search box
-        self.monsters = self.get_monsters_in_range((x0, y0), (x1, y1))
+        monsters_detected = self.get_monsters_in_range((x0, y0), (x1, y1))
 
         # Check if no mob to attack
-        if len(self.monsters) == 0:
+        if len(monsters_detected) == 0:
+            self._monsters_last_detected_time = None
             return
+
+        # NEW: Add human reaction time delay before attacking
+        # Humans don't react instantly - there's a "see-target -> process -> act" delay
+        current_time = time.time()
+        if self._monsters_last_detected_time is None:
+            # First time seeing monster - start reaction timer
+            self._monsters_last_detected_time = current_time
+            # Don't attack this frame - wait for reaction time
+            return
+
+        reaction_elapsed = current_time - self._monsters_last_detected_time
+        reaction_delay = human.get_reaction_delay('attack')
+
+        # Only attack after human reaction time has passed
+        if reaction_elapsed < reaction_delay:
+            return
+
+        # Reset reaction timer for next attack
+        self._monsters_last_detected_time = None
 
         # Update attack command
         if self.cfg["bot"]["attack"] == "aoe_skill":
@@ -1540,6 +1565,8 @@ class MapleStoryAutoBot:
                 self.cmd_action = "attack"
                 # Add slight randomization to attack timing record
                 self.t_last_attack = time.time() + random.uniform(-0.05, 0.05)
+                # Record action for burst pause tracking
+                human.record_action()
 
         elif self.cfg["bot"]["attack"] == "directional":
             # Get nearest monster to player
@@ -1554,6 +1581,8 @@ class MapleStoryAutoBot:
                 self.t_last_attack = time.time() + random.uniform(-0.05, 0.05)
                 # Set up attack direction
                 self.cmd_move_x = attack_direction
+                # Record action for burst pause tracking
+                human.record_action()
 
     def update_cmd_by_random(self):
         '''
